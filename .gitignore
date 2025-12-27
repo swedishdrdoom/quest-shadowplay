@@ -1,0 +1,30 @@
+# Rust
+/target/
+Cargo.lock
+
+# Android
+*.apk
+*.keystore
+/android/build/
+/android/.gradle/
+local.properties
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+
+# Logs
+*.log
+
