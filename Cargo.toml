@@ -8,129 +8,76 @@ authors = ["Quest Shadowplay Team"]
 
 # Build as a shared library that Android can load
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
-[dependencies]
 # ============================================
 # CORE DEPENDENCIES
 # ============================================
 
-# OpenXR - The VR/AR standard API
-# This is how we talk to the Quest 3's VR system
-openxr = "0.18"
-openxr-sys = "0.10"
-
-# Logging - So we can see what's happening
+[dependencies]
+# Logging
 log = "0.4"
-android_logger = "0.13"
-
-# ============================================
-# BUFFER & MEMORY
-# ============================================
-
-# Fast ring buffer implementation
-ringbuf = "0.3"
-
-# Memory-mapped files for large buffers
-memmap2 = "0.9"
-
-# ============================================
-# IMAGE & VIDEO
-# ============================================
-
-# General image processing
-image = { version = "0.24", default-features = false, features = ["jpeg"] }
-
-# Fast JPEG compression (we'll use this for frame compression)
-# Note: May need system turbojpeg library
-turbojpeg = "1.0"
-
-# ============================================
-# CONCURRENCY & THREADING
-# ============================================
-
-# Lock-free data structures
-crossbeam = "0.8"
-
-# Fast mutexes and locks
-parking_lot = "0.12"
-
-# Scoped thread spawning
-rayon = "1.8"
-
-# ============================================
-# TIME & UTILITIES
-# ============================================
-
-# Date/time handling
-chrono = "0.4"
+env_logger = "0.11"
 
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
+
+# Concurrency
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+
+# Time handling
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+# Image processing (pure Rust, no native deps)
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 # ============================================
 # ANDROID-SPECIFIC (only compiled for Android)
 # ============================================
 
 [target.'cfg(target_os = "android")'.dependencies]
-# Java Native Interface - communicate with Android
-jni = "0.21"
+# Android logging
+android_logger = "0.14"
 
 # Android NDK bindings
-ndk = "0.8"
+ndk = "0.9"
 ndk-context = "0.1"
 
-# Android app glue
-android-activity = { version = "0.5", features = ["native-activity"] }
+# JNI for Java interop
+jni = "0.21"
+
+# ============================================
+# DEVELOPMENT DEPENDENCIES
+# ============================================
+
+[dev-dependencies]
+# For testing
+tempfile = "3.15"
 
 # ============================================
 # BUILD CONFIGURATION
 # ============================================
 
 [profile.release]
-# Maximum optimization
 opt-level = 3
-# Link-time optimization for smaller binary
 lto = true
-# Single codegen unit for better optimization
 codegen-units = 1
-# Strip debug symbols
 strip = true
-# Abort on panic (smaller binary, can't unwind)
 panic = "abort"
 
 [profile.dev]
-# Faster dev builds
 opt-level = 1
 
 # ============================================
-# ANDROID BUILD METADATA
+# FEATURES
 # ============================================
 
-[package.metadata.android]
-# Package name in reverse domain notation
-package = "com.questshadowplay.app"
-# App label shown in Quest menu
-label = "Quest Shadowplay"
-# Target Quest 3's Android version
-target_sdk_version = 32
-min_sdk_version = 29
-
-[package.metadata.android.application]
-# Enable debugging
-debuggable = true
-# Use hardware acceleration
-hardware_accelerated = true
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.WRITE_EXTERNAL_STORAGE"
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.READ_EXTERNAL_STORAGE"
-
-[[package.metadata.android.uses_feature]]
-name = "android.hardware.vr.headtracking"
-required = true
-
+[features]
+default = []
+# Enable OpenXR support (requires OpenXR SDK)
+openxr = []
+# Enable Android-specific features
+android = []

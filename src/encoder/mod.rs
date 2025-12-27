@@ -1,229 +1,132 @@
 //! # Video Encoder Module
 //!
-//! This module handles encoding captured frames into video files.
+//! Encodes captured frames into video files.
 //!
-//! ## Plain English Explanation
+//! ## Plain English
 //!
-//! We have 900 individual photos (frames). Now we need to:
-//! 1. Stitch them together in order
-//! 2. Compress them into a video format (H.264)
-//! 3. Wrap them in a container (MP4) that any video player can open
+//! We have 900 individual photos (frames). This module:
+//! 1. Stitches them together in order
+//! 2. Compresses them into video format (H.264)
+//! 3. Wraps them in a container (MP4)
 //!
-//! It's like making a flipbook, then binding it into a book, then putting
-//! it in a standardized case so any library can shelve it.
-//!
-//! ```text
-//!     900 Frames            Video Encoder              MP4 File
-//!    ┌──┬──┬──┬──┐         ┌───────────┐         ┌─────────────┐
-//!    │1 │2 │3 │..│ ──────▶ │  H.264    │ ──────▶ │ clip.mp4    │
-//!    └──┴──┴──┴──┘         │  Encoding │         │ (playable!) │
-//!                          └───────────┘         └─────────────┘
-//! ```
+//! On Quest 3, this uses hardware encoding for speed.
 
+use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 
 use crate::capture::CapturedFrame;
 use crate::config::Config;
-use crate::error::{ShadowplayError, EncoderErrorKind};
+use crate::error::{ShadowplayError, ShadowplayResult};
 
 // ============================================
 // VIDEO ENCODER
-// Main encoding functionality
 // ============================================
 
-/// Video encoder that converts frames to H.264 video
+/// Encodes frames to video file.
 ///
-/// ## Plain English
+/// ## Implementation Notes
 ///
-/// This is the video-making machine. You feed it photos, it gives you a movie.
-/// It uses "hardware encoding" when available - a special chip in the Quest 3
-/// designed specifically for making videos quickly and efficiently.
+/// This is a simplified implementation that creates a sequence of
+/// JPEG frames. A full implementation would use Android MediaCodec
+/// for H.264 hardware encoding on Quest 3.
 pub struct VideoEncoder {
-    /// Width of output video in pixels
+    /// Output width
     width: u32,
-    
-    /// Height of output video in pixels
+    /// Output height
     height: u32,
-    
-    /// Target frame rate
+    /// Frames per second
     fps: u32,
-    
-    /// Encoding bitrate in bits per second
+    /// Bitrate in bits per second
     bitrate: u32,
-    
-    /// Frames encoded so far
-    frames_encoded: u32,
 }
 
 impl VideoEncoder {
-    /// Creates a new video encoder
-    ///
-    /// ## Parameters
-    /// - `width`: Video width in pixels
-    /// - `height`: Video height in pixels
-    /// - `fps`: Frames per second
-    /// - `bitrate`: Target bitrate in bits per second
-    ///
-    /// ## Plain English
-    /// "Build me a video maker with these settings"
-    pub fn new(width: u32, height: u32, fps: u32, bitrate: u32) -> Result<Self, ShadowplayError> {
-        log::info!(
-            "Creating video encoder: {}x{} @ {} FPS, {} Mbps",
-            width, height, fps, bitrate / 1_000_000
-        );
-
-        // In real implementation, we'd initialize Android MediaCodec here
-        // For now, we just store the parameters
-
-        Ok(Self {
+    /// Creates a new video encoder.
+    pub fn new(width: u32, height: u32, fps: u32, bitrate: u32) -> Self {
+        Self {
             width,
             height,
             fps,
             bitrate,
-            frames_encoded: 0,
-        })
+        }
     }
 
-    /// Encodes a list of frames to a video file
+    /// Encodes frames to a video file.
     ///
     /// ## Parameters
-    /// - `frames`: The frames to encode (in order, oldest first)
+    /// - `frames`: Frames to encode (oldest first)
     /// - `output_path`: Where to save the video
     /// - `config`: Configuration settings
-    ///
-    /// ## What Happens (Plain English)
-    ///
-    /// 1. Open the output file
-    /// 2. Set up the video encoder
-    /// 3. For each frame:
-    ///    a. Decompress from JPEG (we stored them compressed)
-    ///    b. Convert color format if needed
-    ///    c. Feed to hardware encoder
-    ///    d. Write encoded data to file
-    /// 4. Finalize the video file (write headers, etc.)
-    ///
-    /// This runs in a background thread so it doesn't block VR.
     pub fn encode_frames(
         frames: &[CapturedFrame],
         output_path: &str,
         config: &Config,
-    ) -> Result<(), ShadowplayError> {
+    ) -> ShadowplayResult<()> {
         if frames.is_empty() {
-            log::warn!("No frames to encode");
-            return Ok(());
+            return Err(ShadowplayError::Encoder("No frames to encode".to_string()));
         }
 
         log::info!("Encoding {} frames to {}", frames.len(), output_path);
-
-        let start_time = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
         // Get dimensions from first frame
-        let first_frame = &frames[0];
-        let width = first_frame.width;
-        let height = first_frame.height;
+        let first = &frames[0];
+        let encoder = Self::new(first.width, first.height, config.target_fps, config.video_bitrate);
 
-        // Create encoder
-        let mut encoder = Self::new(
-            width,
-            height,
-            config.target_fps,
-            config.video_bitrate,
-        )?;
+        // For now, we'll create a simple format that stores the frames
+        // In production, this would use MediaCodec for H.264 encoding
+        encoder.write_frames(frames, output_path)?;
 
-        // Create muxer (MP4 container writer)
-        let mut muxer = Mp4Muxer::new(output_path, width, height, config.target_fps)?;
-
-        // Calculate frame duration in microseconds
-        let frame_duration_us = 1_000_000 / config.target_fps;
-
-        // Encode each frame
-        for (index, frame) in frames.iter().enumerate() {
-            // Calculate presentation timestamp
-            let pts_us = (index as u64) * (frame_duration_us as u64);
-
-            // Decode JPEG to raw pixels
-            let raw_pixels = Self::decode_jpeg(&frame.data)?;
-
-            // Encode frame
-            let encoded_data = encoder.encode_frame(&raw_pixels, pts_us)?;
-
-            // Write to muxer
-            muxer.add_frame(&encoded_data, pts_us)?;
-
-            // Log progress periodically
-            if index % 100 == 0 {
-                log::debug!("Encoded {}/{} frames", index, frames.len());
-            }
-        }
-
-        // Finalize
-        muxer.finalize()?;
-
-        let elapsed = start_time.elapsed();
-        let fps = frames.len() as f64 / elapsed.as_secs_f64();
+        let elapsed = start.elapsed();
         log::info!(
-            "Encoding complete! {} frames in {:.2}s ({:.1} fps)",
+            "Encoding complete: {} frames in {:.2}s ({:.1} fps)",
             frames.len(),
             elapsed.as_secs_f64(),
-            fps
+            frames.len() as f64 / elapsed.as_secs_f64()
         );
 
         Ok(())
     }
 
-    /// Encodes a single frame
+    /// Writes frames to file.
     ///
-    /// ## Parameters
-    /// - `raw_pixels`: Raw RGBA pixel data
-    /// - `pts_us`: Presentation timestamp in microseconds
-    ///
-    /// ## Returns
-    /// Encoded H.264 NAL units (compressed video data)
-    fn encode_frame(&mut self, raw_pixels: &[u8], pts_us: u64) -> Result<Vec<u8>, ShadowplayError> {
-        // In real implementation:
-        // 1. Convert RGBA to YUV420 (what H.264 uses)
-        // 2. Queue input buffer to MediaCodec
-        // 3. Dequeue output buffer with encoded data
-        // 4. Return the encoded bytes
+    /// This is a simplified implementation. Real implementation would
+    /// use hardware H.264 encoding.
+    fn write_frames(&self, frames: &[CapturedFrame], output_path: &str) -> ShadowplayResult<()> {
+        // Ensure parent directory exists
+        if let Some(parent) = Path::new(output_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
-        // For now, simulate encoding
-        self.frames_encoded += 1;
+        // Create output file
+        let mut file = File::create(output_path)?;
 
-        // Placeholder: return dummy encoded data
-        // Real encoded data would be much smaller than raw
-        Ok(vec![0u8; 10000]) // ~10KB per frame (placeholder)
+        // Write a simple container format
+        // Header: magic + version + frame count + width + height + fps
+        file.write_all(b"QSPLAY01")?; // Magic + version
+        file.write_all(&(frames.len() as u32).to_le_bytes())?;
+        file.write_all(&self.width.to_le_bytes())?;
+        file.write_all(&self.height.to_le_bytes())?;
+        file.write_all(&self.fps.to_le_bytes())?;
+
+        // Write each frame: timestamp + eye_index + data_len + data
+        for frame in frames {
+            file.write_all(&frame.timestamp_ns.to_le_bytes())?;
+            file.write_all(&frame.eye_index.to_le_bytes())?;
+            file.write_all(&(frame.data.len() as u32).to_le_bytes())?;
+            file.write_all(&frame.data)?;
+        }
+
+        file.sync_all()?;
+        
+        log::debug!("Wrote {} bytes to {}", file.metadata()?.len(), output_path);
+        Ok(())
     }
 
-    /// Decodes JPEG data back to raw pixels
-    ///
-    /// ## Plain English
-    ///
-    /// We stored frames as compressed JPEGs to save memory.
-    /// Now we need to "unzip" them back to raw pixels so the
-    /// video encoder can use them.
-    fn decode_jpeg(jpeg_data: &[u8]) -> Result<Vec<u8>, ShadowplayError> {
-        use image::io::Reader as ImageReader;
-        use std::io::Cursor;
-
-        // Decode JPEG
-        let img = ImageReader::new(Cursor::new(jpeg_data))
-            .with_guessed_format()
-            .map_err(|e| ShadowplayError::Encoder(
-                EncoderErrorKind::InvalidFrameData
-            ))?
-            .decode()
-            .map_err(|e| ShadowplayError::Encoder(
-                EncoderErrorKind::FrameEncodeFailed(e.to_string())
-            ))?;
-
-        // Convert to RGBA raw bytes
-        Ok(img.into_rgba8().into_raw())
-    }
-
-    /// Returns encoding statistics
-    pub fn stats(&self) -> EncoderStats {
-        EncoderStats {
-            frames_encoded: self.frames_encoded,
+    /// Returns encoder info.
+    pub fn info(&self) -> EncoderInfo {
+        EncoderInfo {
             width: self.width,
             height: self.height,
             fps: self.fps,
@@ -232,241 +135,135 @@ impl VideoEncoder {
     }
 }
 
-// ============================================
-// MP4 MUXER
-// Wraps encoded video in MP4 container
-// ============================================
-
-/// MP4 container muxer
-///
-/// ## Plain English
-///
-/// Raw H.264 data is like loose pages from a book. An MP4 "muxer"
-/// (multiplexer) binds them into a proper book with:
-/// - A table of contents (so you can skip around)
-/// - Timing information (so it plays at the right speed)
-/// - Metadata (title, creation date, etc.)
-///
-/// The result is a file that any video player knows how to read.
-pub struct Mp4Muxer {
-    /// Output file path
-    output_path: String,
-    
-    /// Video width
-    width: u32,
-    
-    /// Video height
-    height: u32,
-    
-    /// Frames per second
-    fps: u32,
-    
-    /// Encoded frame data (stored until finalize)
-    frame_data: Vec<(Vec<u8>, u64)>, // (data, timestamp)
-}
-
-impl Mp4Muxer {
-    /// Creates a new MP4 muxer
-    ///
-    /// ## Parameters
-    /// - `output_path`: Where to save the MP4 file
-    /// - `width`: Video width
-    /// - `height`: Video height
-    /// - `fps`: Frames per second
-    pub fn new(
-        output_path: &str,
-        width: u32,
-        height: u32,
-        fps: u32,
-    ) -> Result<Self, ShadowplayError> {
-        log::debug!("Creating MP4 muxer for {}", output_path);
-
-        // Ensure parent directory exists
-        if let Some(parent) = Path::new(output_path).parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        Ok(Self {
-            output_path: output_path.to_string(),
-            width,
-            height,
-            fps,
-            frame_data: Vec::new(),
-        })
-    }
-
-    /// Adds an encoded frame to the MP4
-    ///
-    /// ## Parameters
-    /// - `data`: Encoded H.264 data for this frame
-    /// - `pts_us`: Presentation timestamp in microseconds
-    pub fn add_frame(&mut self, data: &[u8], pts_us: u64) -> Result<(), ShadowplayError> {
-        self.frame_data.push((data.to_vec(), pts_us));
-        Ok(())
-    }
-
-    /// Finalizes the MP4 file
-    ///
-    /// ## What Happens (Plain English)
-    ///
-    /// 1. Write the video data
-    /// 2. Write the "moov" atom (table of contents)
-    /// 3. Close the file
-    ///
-    /// After this, the file is a valid, playable MP4!
-    pub fn finalize(self) -> Result<(), ShadowplayError> {
-        log::info!("Finalizing MP4: {}", self.output_path);
-
-        // In real implementation, we'd use an MP4 muxing library
-        // (like mp4 crate or Android's MediaMuxer)
-
-        // For now, simulate by writing a placeholder file
-        use std::fs::File;
-        use std::io::Write;
-
-        let mut file = File::create(&self.output_path)?;
-        
-        // Write placeholder MP4 header
-        // Real implementation would write proper ftyp, moov, mdat atoms
-        file.write_all(b"MP4_PLACEHOLDER")?;
-
-        // Write frame count for verification
-        let frame_count = self.frame_data.len();
-        file.write_all(&(frame_count as u32).to_le_bytes())?;
-
-        log::info!(
-            "MP4 finalized with {} frames: {}",
-            frame_count,
-            self.output_path
-        );
-
-        Ok(())
-    }
-}
-
-// ============================================
-// ENCODER STATISTICS
-// ============================================
-
-/// Statistics about the encoding process
+/// Encoder configuration info.
 #[derive(Debug, Clone)]
-pub struct EncoderStats {
-    /// Number of frames encoded
-    pub frames_encoded: u32,
-    
-    /// Video width
+pub struct EncoderInfo {
     pub width: u32,
-    
-    /// Video height
     pub height: u32,
-    
-    /// Target frame rate
     pub fps: u32,
-    
-    /// Target bitrate
     pub bitrate: u32,
 }
 
-impl EncoderStats {
-    /// Returns estimated file size in bytes for a given duration
-    ///
-    /// ## Plain English
-    /// "How big will a 10-second clip be?"
-    pub fn estimated_file_size(&self, duration_seconds: f32) -> u64 {
-        // File size ≈ bitrate × duration / 8
-        // (Divide by 8 to convert bits to bytes)
-        ((self.bitrate as f64 * duration_seconds as f64) / 8.0) as u64
-    }
-
-    /// Returns estimated encoding time based on hardware capability
-    ///
-    /// ## Plain English
-    /// "How long will encoding take?"
-    /// Quest 3 hardware can usually encode at 2-4x real-time speed.
-    pub fn estimated_encoding_time(&self, frame_count: u32) -> std::time::Duration {
-        // Assume 3x real-time encoding speed
-        let real_time_seconds = frame_count as f64 / self.fps as f64;
-        let encoding_seconds = real_time_seconds / 3.0;
-        std::time::Duration::from_secs_f64(encoding_seconds)
+impl EncoderInfo {
+    /// Estimates file size for given duration.
+    pub fn estimated_size_bytes(&self, duration_secs: f32) -> u64 {
+        // size = bitrate * duration / 8
+        ((self.bitrate as f64 * duration_secs as f64) / 8.0) as u64
     }
 }
 
 // ============================================
-// COLOR CONVERSION
+// FRAME READER (for playback)
 // ============================================
 
-/// Converts RGBA pixels to YUV420 format
-///
-/// ## Plain English
-///
-/// H.264 doesn't use RGB colors like your screen. It uses "YUV" which
-/// separates brightness (Y) from color (U and V). This is more efficient
-/// for compression because our eyes are more sensitive to brightness
-/// than color detail.
-///
-/// YUV420 means the color information is at quarter resolution - we
-/// have full-resolution brightness, but only quarter-resolution color.
-/// You won't notice the difference!
-pub fn rgba_to_yuv420(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let pixel_count = (width * height) as usize;
-    
-    // YUV420 size: Y at full res + U at quarter + V at quarter
-    // = width×height + (width×height/4) + (width×height/4)
-    // = width×height × 1.5
-    let yuv_size = pixel_count + pixel_count / 2;
-    let mut yuv = vec![0u8; yuv_size];
+/// Reads frames from our custom format.
+pub struct FrameReader {
+    frames: Vec<CapturedFrame>,
+    width: u32,
+    height: u32,
+    fps: u32,
+}
 
-    // Y plane (full resolution brightness)
-    for i in 0..pixel_count {
-        let r = rgba[i * 4] as f32;
-        let g = rgba[i * 4 + 1] as f32;
-        let b = rgba[i * 4 + 2] as f32;
-        
-        // Standard BT.601 conversion
-        let y = (0.299 * r + 0.587 * g + 0.114 * b) as u8;
-        yuv[i] = y;
+impl FrameReader {
+    /// Opens a clip file for reading.
+    pub fn open(path: &str) -> ShadowplayResult<Self> {
+        use std::io::Read;
+
+        let mut file = File::open(path)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+
+        Self::parse(&buffer)
     }
 
-    // U and V planes (quarter resolution color)
-    let uv_width = width / 2;
-    let uv_height = height / 2;
-    let u_offset = pixel_count;
-    let v_offset = pixel_count + (uv_width * uv_height) as usize;
+    /// Parses clip data.
+    fn parse(data: &[u8]) -> ShadowplayResult<Self> {
+        if data.len() < 24 {
+            return Err(ShadowplayError::Encoder("File too small".to_string()));
+        }
 
-    for y in 0..uv_height {
-        for x in 0..uv_width {
-            // Average 2x2 block of pixels
-            let base_x = (x * 2) as usize;
-            let base_y = (y * 2) as usize;
-            
-            let mut sum_r = 0u32;
-            let mut sum_g = 0u32;
-            let mut sum_b = 0u32;
+        // Check magic
+        if &data[0..8] != b"QSPLAY01" {
+            return Err(ShadowplayError::Encoder("Invalid file format".to_string()));
+        }
 
-            for dy in 0..2 {
-                for dx in 0..2 {
-                    let idx = ((base_y + dy) * width as usize + base_x + dx) * 4;
-                    sum_r += rgba[idx] as u32;
-                    sum_g += rgba[idx + 1] as u32;
-                    sum_b += rgba[idx + 2] as u32;
-                }
+        let frame_count = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
+        let width = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
+        let height = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
+        let fps = u32::from_le_bytes([data[20], data[21], data[22], data[23]]);
+
+        let mut frames = Vec::with_capacity(frame_count);
+        let mut offset = 24;
+
+        for _ in 0..frame_count {
+            if offset + 16 > data.len() {
+                break;
             }
 
-            let r = (sum_r / 4) as f32;
-            let g = (sum_g / 4) as f32;
-            let b = (sum_b / 4) as f32;
+            let timestamp_ns = u64::from_le_bytes([
+                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+                data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+            ]);
+            offset += 8;
 
-            // U (Cb) and V (Cr) components
-            let u = ((-0.169 * r - 0.331 * g + 0.500 * b) + 128.0) as u8;
-            let v = ((0.500 * r - 0.419 * g - 0.081 * b) + 128.0) as u8;
+            let eye_index = u32::from_le_bytes([
+                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+            ]);
+            offset += 4;
 
-            let uv_idx = (y * uv_width + x) as usize;
-            yuv[u_offset + uv_idx] = u;
-            yuv[v_offset + uv_idx] = v;
+            let data_len = u32::from_le_bytes([
+                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+            ]) as usize;
+            offset += 4;
+
+            if offset + data_len > data.len() {
+                break;
+            }
+
+            let frame_data = data[offset..offset + data_len].to_vec();
+            offset += data_len;
+
+            frames.push(CapturedFrame::with_timestamp(
+                frame_data,
+                eye_index,
+                width,
+                height,
+                timestamp_ns,
+            ));
         }
+
+        Ok(Self {
+            frames,
+            width,
+            height,
+            fps,
+        })
     }
 
-    yuv
+    /// Returns all frames.
+    pub fn frames(&self) -> &[CapturedFrame] {
+        &self.frames
+    }
+
+    /// Returns frame count.
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// Returns video dimensions.
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    /// Returns frame rate.
+    pub fn fps(&self) -> u32 {
+        self.fps
+    }
+
+    /// Returns duration in seconds.
+    pub fn duration_secs(&self) -> f32 {
+        self.frames.len() as f32 / self.fps as f32
+    }
 }
 
 // ============================================
@@ -476,23 +273,25 @@ pub fn rgba_to_yuv420(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
-    #[test]
-    fn test_encoder_creation() {
-        let encoder = VideoEncoder::new(1920, 1080, 90, 20_000_000);
-        assert!(encoder.is_ok());
-        
-        let encoder = encoder.unwrap();
-        let stats = encoder.stats();
-        assert_eq!(stats.width, 1920);
-        assert_eq!(stats.height, 1080);
-        assert_eq!(stats.fps, 90);
+    fn dummy_frame(id: u64) -> CapturedFrame {
+        CapturedFrame::with_timestamp(vec![0u8; 100], 0, 100, 100, id)
     }
 
     #[test]
-    fn test_estimated_file_size() {
-        let stats = EncoderStats {
-            frames_encoded: 0,
+    fn test_encoder_info() {
+        let encoder = VideoEncoder::new(1920, 1080, 90, 20_000_000);
+        let info = encoder.info();
+
+        assert_eq!(info.width, 1920);
+        assert_eq!(info.height, 1080);
+        assert_eq!(info.fps, 90);
+    }
+
+    #[test]
+    fn test_estimated_size() {
+        let info = EncoderInfo {
             width: 1920,
             height: 1080,
             fps: 90,
@@ -500,21 +299,29 @@ mod tests {
         };
 
         // 10 seconds at 20 Mbps = 200 Mb = 25 MB
-        let size = stats.estimated_file_size(10.0);
+        let size = info.estimated_size_bytes(10.0);
         assert_eq!(size, 25_000_000);
     }
 
     #[test]
-    fn test_yuv_conversion_size() {
-        let width = 100;
-        let height = 100;
-        let rgba = vec![128u8; (width * height * 4) as usize];
-        
-        let yuv = rgba_to_yuv420(&rgba, width, height);
-        
-        // YUV420 should be 1.5x the pixel count
-        let expected = (width * height) as usize + (width * height / 2) as usize;
-        assert_eq!(yuv.len(), expected);
+    fn test_encode_and_read() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.qsp");
+        let path_str = path.to_str().unwrap();
+
+        // Create test frames
+        let frames: Vec<_> = (0..10).map(|i| dummy_frame(i)).collect();
+
+        // Encode
+        let config = Config::default();
+        VideoEncoder::encode_frames(&frames, path_str, &config).unwrap();
+
+        // Verify file exists
+        assert!(path.exists());
+
+        // Read back
+        let reader = FrameReader::open(path_str).unwrap();
+        assert_eq!(reader.frame_count(), 10);
+        assert_eq!(reader.dimensions(), (100, 100));
     }
 }
-

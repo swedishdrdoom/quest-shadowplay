@@ -1,314 +1,311 @@
 //! # Quest Shadowplay
 //!
 //! A replay buffer application for Meta Quest 3 that continuously captures
-//! eye buffer frames and saves the last 10 seconds on demand.
-//!
-//! ## How It Works (Plain English)
-//!
-//! Imagine you're watching TV, and there's a magic DVR that's ALWAYS recording
-//! the last 10 seconds. When something cool happens, you press a button and
-//! that clip gets saved forever. That's what this app does for your VR experience!
+//! VR eye buffer frames and saves the last 10 seconds on demand.
 //!
 //! ## Architecture Overview
 //!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                    Quest Shadowplay                          │
-//! ├─────────────────────────────────────────────────────────────┤
-//! │                                                              │
-//! │  VR App → [Frame Capture] → [Ring Buffer] → [Encoder] → 📁  │
-//! │                                    ↑                         │
-//! │                              [Input Handler]                 │
-//! │                          (button press triggers save)        │
-//! └─────────────────────────────────────────────────────────────┘
-//! ```
+//! The application is structured into independent modules:
+//!
+//! - `buffer`: Ring buffer for storing captured frames
+//! - `capture`: Frame capture from VR eye buffer  
+//! - `input`: Controller input handling
+//! - `encoder`: Video encoding (H.264)
+//! - `storage`: File system operations
+//! - `config`: Application configuration
+//! - `error`: Error types
 
 // ============================================
 // MODULE DECLARATIONS
-// These are like "chapters" in our app
 // ============================================
 
-/// Frame capture from OpenXR - grabs images from VR
-pub mod capture;
-
-/// Circular buffer for storing recent frames
 pub mod buffer;
-
-/// Controller input detection
-pub mod input;
-
-/// Video encoding (turns frames into video)
+pub mod capture;
+pub mod config;
 pub mod encoder;
-
-/// File saving to Quest storage
+pub mod error;
+pub mod input;
 pub mod storage;
 
-/// Configuration and settings
-pub mod config;
+// ============================================
+// RE-EXPORTS
+// ============================================
 
-/// Error types used throughout the app
-pub mod error;
+pub use buffer::SharedFrameBuffer;
+pub use capture::CapturedFrame;
+pub use config::Config;
+pub use error::{ShadowplayError, ShadowplayResult};
+pub use input::InputHandler;
 
 // ============================================
 // IMPORTS
-// Bringing in tools we need from our modules and external libraries
 // ============================================
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
-use log::{info, error, warn};
-use parking_lot::RwLock;
-
-use crate::buffer::SharedFrameBuffer;
-use crate::capture::CapturedFrame;
-use crate::config::Config;
-use crate::encoder::VideoEncoder;
-use crate::error::ShadowplayError;
-use crate::input::InputHandler;
-use crate::storage::StorageManager;
+use log::{error, info, warn};
+use parking_lot::Mutex;
 
 // ============================================
-// MAIN APPLICATION STRUCTURE
-// This is the "brain" of our app
+// APPLICATION STATE
 // ============================================
 
-/// The main Quest Shadowplay application
+/// The main Quest Shadowplay application.
 ///
-/// ## Plain English Explanation
+/// ## Plain English
 ///
-/// Think of this as the control center of our app. It:
-/// 1. Holds the circular buffer (our rolling 10-second memory)
-/// 2. Watches for button presses
-/// 3. Coordinates saving clips to disk
-/// 4. Makes sure everything runs smoothly without crashing
+/// This is the "control center" that coordinates all parts of the app:
+/// - Receives captured frames and stores them
+/// - Watches for save button presses
+/// - Triggers video encoding when saving
 pub struct QuestShadowplay {
     /// The circular buffer storing recent frames
-    /// Arc = "Atomic Reference Counter" - lets multiple parts of our code
-    /// share this safely
     buffer: Arc<SharedFrameBuffer>,
 
-    /// Handles controller button detection
-    input_handler: InputHandler,
+    /// Handles controller input
+    input_handler: Arc<Mutex<InputHandler>>,
 
-    /// Manages file saving
-    storage: StorageManager,
-
-    /// Configuration settings
+    /// Application configuration
     config: Config,
 
-    /// Flag: are we currently saving a clip?
-    /// AtomicBool = a true/false that's safe to check from multiple threads
+    /// Is a save currently in progress?
     is_saving: Arc<AtomicBool>,
 
-    /// Flag: is the app running?
+    /// Is the application running?
     is_running: Arc<AtomicBool>,
+
+    /// Statistics about operation
+    stats: Arc<Mutex<AppStats>>,
+}
+
+/// Runtime statistics for monitoring
+#[derive(Debug, Default, Clone)]
+pub struct AppStats {
+    /// Total frames received
+    pub frames_received: u64,
+    /// Total clips saved
+    pub clips_saved: u64,
+    /// Total save errors
+    pub save_errors: u64,
 }
 
 impl QuestShadowplay {
-    /// Creates and initializes the application
+    /// Creates a new application instance with default configuration.
+    pub fn new() -> ShadowplayResult<Self> {
+        Self::with_config(Config::default())
+    }
+
+    /// Creates a new application instance with custom configuration.
     ///
-    /// ## What Happens Here (Plain English)
+    /// ## Parameters
+    /// - `config`: The configuration to use
     ///
-    /// This is like the "startup sequence" when you turn on a machine:
-    /// 1. Load settings (how long to record, what button to use, etc.)
-    /// 2. Create the frame buffer (our 10-second memory)
-    /// 3. Set up button detection
-    /// 4. Prepare the file saving system
-    /// 5. Return the ready-to-go app
-    pub fn new() -> Result<Self, ShadowplayError> {
-        // Load configuration (or use defaults)
-        let config = Config::default();
+    /// ## Returns
+    /// A new `QuestShadowplay` instance or an error
+    pub fn with_config(config: Config) -> ShadowplayResult<Self> {
+        // Validate configuration
+        let errors = config.validate();
+        if !errors.is_empty() {
+            return Err(ShadowplayError::Config(errors[0].clone()));
+        }
 
         info!(
-            "Initializing Quest Shadowplay: {} seconds buffer at {} FPS",
-            config.buffer_duration_seconds,
-            config.target_fps
+            "Initializing Quest Shadowplay: {}s buffer at {} FPS",
+            config.buffer_duration_seconds, config.target_fps
         );
 
-        // Create the circular frame buffer
-        // This will hold our rolling 10 seconds of footage
+        // Create the frame buffer
         let buffer = Arc::new(SharedFrameBuffer::new(
             config.buffer_duration_seconds,
             config.target_fps,
         ));
 
-        // Set up input handling for save trigger
-        let input_handler = InputHandler::new(config.trigger_button.clone());
+        // Create input handler
+        let input_handler = Arc::new(Mutex::new(InputHandler::new(
+            config.trigger_button.clone(),
+        )));
 
-        // Set up storage for saving clips
-        let storage = StorageManager::new(&config.output_directory)?;
-
-        info!("Quest Shadowplay initialized successfully!");
+        info!("Quest Shadowplay initialized successfully");
 
         Ok(Self {
             buffer,
             input_handler,
-            storage,
             config,
             is_saving: Arc::new(AtomicBool::new(false)),
             is_running: Arc::new(AtomicBool::new(true)),
+            stats: Arc::new(Mutex::new(AppStats::default())),
         })
     }
 
-    /// Called every frame when a new image is captured
+    /// Called when a new frame is captured.
     ///
-    /// ## What Happens Here (Plain English)
-    ///
-    /// This function runs ~90 times per second (once per frame):
-    /// 1. Take the new frame and add it to our buffer
-    /// 2. Check if the user pressed the save button
-    /// 3. If yes, start saving in the background
-    ///
-    /// It's like a factory worker on an assembly line - grab the item,
-    /// put it in storage, check for special instructions, repeat.
-    pub fn on_frame_captured(&mut self, frame: CapturedFrame) {
-        // Add frame to our circular buffer
-        // Old frames are automatically discarded when buffer is full
+    /// This should be called ~90 times per second (once per VR frame).
+    /// The frame is added to the ring buffer, and we check if a save
+    /// should be triggered.
+    pub fn on_frame_captured(&self, frame: CapturedFrame) {
+        // Update stats
+        {
+            let mut stats = self.stats.lock();
+            stats.frames_received += 1;
+        }
+
+        // Add to buffer
         self.buffer.push_frame(frame);
 
-        // Check if user wants to save
-        if self.input_handler.check_save_triggered() {
-            self.trigger_save();
+        // Check for save trigger (only if not already saving)
+        if !self.is_saving.load(Ordering::SeqCst) {
+            let mut input = self.input_handler.lock();
+            if input.check_save_triggered() {
+                self.trigger_save();
+            }
         }
     }
 
-    /// Triggers a save operation
+    /// Updates the input state from controller data.
     ///
-    /// ## What Happens Here (Plain English)
+    /// Call this every frame with the latest controller state.
+    pub fn update_input(&self, state: input::InputState) {
+        let mut handler = self.input_handler.lock();
+        handler.update(state);
+    }
+
+    /// Manually triggers a save operation.
     ///
-    /// When you press the save button:
-    /// 1. We check if we're already saving (can't save two clips at once)
-    /// 2. If not, we "freeze" the current buffer contents
-    /// 3. Start a background task to encode and save the video
-    /// 4. Continue recording normally - you don't miss any frames!
-    fn trigger_save(&self) {
+    /// Returns `true` if save was started, `false` if already saving.
+    pub fn trigger_save(&self) -> bool {
         // Check if already saving
-        if self.is_saving.load(Ordering::SeqCst) {
-            warn!("Save already in progress, ignoring trigger");
-            return;
+        if self.is_saving.swap(true, Ordering::SeqCst) {
+            warn!("Save already in progress");
+            return false;
         }
 
-        info!("Save triggered! Starting background save...");
-
-        // Mark that we're now saving
-        self.is_saving.store(true, Ordering::SeqCst);
+        info!("Save triggered - starting background encode");
 
         // Clone references for the background thread
         let buffer = Arc::clone(&self.buffer);
         let is_saving = Arc::clone(&self.is_saving);
         let config = self.config.clone();
-        let output_dir = self.config.output_directory.clone();
+        let stats = Arc::clone(&self.stats);
 
-        // Spawn a background thread to do the encoding
-        // This way, recording continues while we save
+        // Spawn background thread for encoding
         thread::spawn(move || {
-            // Take a snapshot of current frames
-            let frames = buffer.snapshot();
-            let frame_count = frames.len();
+            let result = Self::do_save(&buffer, &config);
 
-            info!("Saving {} frames...", frame_count);
-
-            // Generate output filename with timestamp
-            let filename = StorageManager::generate_filename(&output_dir);
-
-            // Encode to video
-            match VideoEncoder::encode_frames(&frames, &filename, &config) {
-                Ok(()) => {
-                    info!("Successfully saved clip to: {}", filename);
-                    // TODO: Send haptic feedback for success
+            // Update stats
+            {
+                let mut s = stats.lock();
+                match &result {
+                    Ok(_) => s.clips_saved += 1,
+                    Err(_) => s.save_errors += 1,
                 }
-                Err(e) => {
-                    error!("Failed to save clip: {}", e);
-                    // TODO: Send haptic feedback for failure
-                }
+            }
+
+            // Log result
+            match result {
+                Ok(path) => info!("Clip saved to: {}", path),
+                Err(e) => error!("Failed to save clip: {}", e),
             }
 
             // Mark save as complete
             is_saving.store(false, Ordering::SeqCst);
         });
+
+        true
     }
 
-    /// Shuts down the application gracefully
-    ///
-    /// ## What Happens Here (Plain English)
-    ///
-    /// Like turning off a machine properly instead of pulling the plug:
-    /// 1. Signal all parts to stop
-    /// 2. Wait for any in-progress saves to finish
-    /// 3. Clean up resources
-    pub fn shutdown(&mut self) {
-        info!("Shutting down Quest Shadowplay...");
-        
-        self.is_running.store(false, Ordering::SeqCst);
+    /// Performs the actual save operation (runs in background thread).
+    fn do_save(buffer: &SharedFrameBuffer, config: &Config) -> ShadowplayResult<String> {
+        // Snapshot the buffer
+        let frames = buffer.snapshot();
+        let frame_count = frames.len();
 
-        // Wait for any ongoing save to complete
-        while self.is_saving.load(Ordering::SeqCst) {
-            thread::sleep(std::time::Duration::from_millis(100));
+        if frame_count == 0 {
+            return Err(ShadowplayError::Internal("No frames to save".to_string()));
         }
 
-        info!("Quest Shadowplay shut down cleanly.");
+        info!("Encoding {} frames...", frame_count);
+
+        // Generate output path
+        let output_path = storage::StorageManager::generate_filename(&config.output_directory);
+
+        // Ensure output directory exists
+        storage::ensure_directory(&config.output_directory)?;
+
+        // Encode frames to video
+        encoder::VideoEncoder::encode_frames(&frames, &output_path, config)?;
+
+        Ok(output_path)
     }
 
-    /// Returns whether the app is currently saving a clip
+    /// Returns whether a save is currently in progress.
     pub fn is_saving(&self) -> bool {
         self.is_saving.load(Ordering::SeqCst)
     }
 
-    /// Returns the current buffer fill percentage (0.0 - 1.0)
-    pub fn buffer_fill_percent(&self) -> f32 {
+    /// Returns the current buffer fill percentage (0.0 to 1.0).
+    pub fn buffer_fill(&self) -> f32 {
         self.buffer.fill_percentage()
+    }
+
+    /// Returns the number of frames currently in the buffer.
+    pub fn buffer_frame_count(&self) -> usize {
+        self.buffer.frame_count()
+    }
+
+    /// Returns a copy of the current statistics.
+    pub fn stats(&self) -> AppStats {
+        self.stats.lock().clone()
+    }
+
+    /// Returns a reference to the configuration.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Shuts down the application gracefully.
+    pub fn shutdown(&self) {
+        info!("Shutting down Quest Shadowplay...");
+
+        self.is_running.store(false, Ordering::SeqCst);
+
+        // Wait for any in-progress save to complete
+        while self.is_saving.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        info!("Shutdown complete");
+    }
+}
+
+impl Default for QuestShadowplay {
+    fn default() -> Self {
+        Self::new().expect("Failed to create default QuestShadowplay")
     }
 }
 
 // ============================================
 // ANDROID ENTRY POINT
-// This is where Android starts our app
 // ============================================
 
-/// Android native activity entry point
-///
-/// ## What Happens Here (Plain English)
-///
-/// When you launch the app on Quest, Android calls this function.
-/// It's like the "main" function in a regular program - the starting point.
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "C" fn android_main(app: android_activity::AndroidApp) {
-    // Initialize Android logging
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("QuestShadowplay"),
-    );
+/// Initialize logging for the platform.
+pub fn init_logging() {
+    #[cfg(target_os = "android")]
+    {
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_max_level(log::LevelFilter::Info)
+                .with_tag("QuestShadowplay"),
+        );
+    }
 
-    info!("Quest Shadowplay starting...");
-
-    // Create and run the application
-    match QuestShadowplay::new() {
-        Ok(mut app) => {
-            info!("Application created, entering main loop");
-            // In a real implementation, this would integrate with
-            // the OpenXR layer to receive frames
-            
-            // For now, we just keep the app alive
-            loop {
-                // TODO: Process OpenXR events
-                // TODO: Handle app lifecycle events
-                
-                if !app.is_running.load(Ordering::SeqCst) {
-                    break;
-                }
-                
-                thread::sleep(std::time::Duration::from_millis(10));
-            }
-            
-            app.shutdown();
-        }
-        Err(e) => {
-            error!("Failed to create application: {}", e);
-        }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Info)
+            .try_init();
     }
 }
 
@@ -322,10 +319,30 @@ mod tests {
 
     #[test]
     fn test_app_creation() {
-        // This test verifies the app can be created
-        // Note: Will fail on non-Android without mocking
-        // let app = QuestShadowplay::new();
-        // assert!(app.is_ok());
+        init_logging();
+        let app = QuestShadowplay::new();
+        assert!(app.is_ok());
+    }
+
+    #[test]
+    fn test_app_with_config() {
+        let config = Config::default();
+        let app = QuestShadowplay::with_config(config);
+        assert!(app.is_ok());
+    }
+
+    #[test]
+    fn test_buffer_starts_empty() {
+        let app = QuestShadowplay::new().unwrap();
+        assert_eq!(app.buffer_frame_count(), 0);
+        assert_eq!(app.buffer_fill(), 0.0);
+    }
+
+    #[test]
+    fn test_stats_default() {
+        let app = QuestShadowplay::new().unwrap();
+        let stats = app.stats();
+        assert_eq!(stats.frames_received, 0);
+        assert_eq!(stats.clips_saved, 0);
     }
 }
-

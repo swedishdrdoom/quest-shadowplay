@@ -2,73 +2,38 @@
 //!
 //! A fixed-size circular buffer that overwrites old elements when full.
 //!
-//! ## Plain English Explanation
+//! ## Plain English
 //!
-//! Picture a circular track with numbered parking spots (0, 1, 2, ... N-1).
-//! A parking attendant (write_index) walks around the track:
-//!
-//! ```text
-//! Empty buffer (capacity 5):
-//!
-//!        [0]
-//!       /   \
-//!    [4]     [1]
-//!       \   /
-//!     [3]-[2]
-//!
-//! After adding A, B, C (write_index at 3):
-//!
-//!        [A]
-//!       /   \
-//!    [ ]     [B]
-//!       \   /
-//!     [ ]-[C]
-//!          ↑
-//!       write here next
-//!
-//! After buffer is full + adding F (overwrites A):
-//!
-//!        [F] ← newest (just wrote here)
-//!       /   \
-//!    [E]     [B] ← oldest (will be overwritten next)
-//!       \   /
-//!     [D]-[C]
-//! ```
+//! Picture a circular track with numbered parking spots.
+//! When all spots are full and a new car arrives,
+//! the oldest car is towed away to make room.
 
 use std::collections::VecDeque;
 
-/// A fixed-capacity ring buffer
-///
-/// ## Type Parameter
-/// - `T`: The type of items stored (for us, it's `CapturedFrame`)
+/// A fixed-capacity ring buffer.
 ///
 /// ## Properties
 /// - Fixed capacity (doesn't grow)
-/// - O(1) push operation (constant time, always fast)
+/// - O(1) push operation
 /// - Automatically discards oldest when full
 /// - Maintains insertion order
 #[derive(Debug)]
 pub struct RingBuffer<T> {
-    /// The actual storage for items
-    /// VecDeque = "Vector Double-Ended Queue"
-    /// It's efficient for adding/removing from both ends
+    /// The actual storage
     data: VecDeque<T>,
-    
-    /// Maximum number of items we can hold
+
+    /// Maximum number of items
     capacity: usize,
 }
 
-impl<T: Clone> RingBuffer<T> {
-    /// Creates a new ring buffer with the given capacity
-    ///
-    /// ## Plain English
-    ///
-    /// "Build me a circular track with this many parking spots"
+impl<T> RingBuffer<T> {
+    /// Creates a new ring buffer with the given capacity.
     ///
     /// ## Example
     /// ```
+    /// # use quest_shadowplay::buffer::RingBuffer;
     /// let buffer: RingBuffer<i32> = RingBuffer::new(100);
-    /// // Can now hold up to 100 integers
+    /// assert_eq!(buffer.capacity(), 100);
     /// ```
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -77,101 +42,66 @@ impl<T: Clone> RingBuffer<T> {
         }
     }
 
-    /// Adds an item to the buffer
+    /// Adds an item to the buffer.
     ///
-    /// ## Plain English
-    ///
-    /// "Here's a new item. Put it in the next spot. If we're full,
-    /// throw away the oldest item first to make room."
-    ///
-    /// ## Behavior
-    /// - If buffer is not full: item is simply added
-    /// - If buffer is full: oldest item is removed, new item is added
-    ///
-    /// ## Performance
-    /// - Time: O(1) - always the same speed regardless of buffer size
-    /// - Memory: No new allocations (we pre-allocated in `new`)
+    /// If the buffer is full, the oldest item is removed first.
     pub fn push(&mut self, item: T) {
-        // If we're at capacity, remove the oldest item
         if self.data.len() >= self.capacity {
-            self.data.pop_front(); // Remove from front (oldest)
+            self.data.pop_front();
         }
-        
-        // Add new item at the back (newest)
         self.data.push_back(item);
     }
 
-    /// Returns all items in order (oldest first)
-    ///
-    /// ## Plain English
-    ///
-    /// "Give me a list of everything in the buffer, starting with
-    /// the oldest item and ending with the newest."
-    ///
-    /// ## Returns
-    /// A vector of references to all items, in chronological order
-    pub fn get_all(&self) -> Vec<&T> {
-        self.data.iter().collect()
-    }
-
-    /// Returns the number of items currently stored
-    ///
-    /// ## Plain English
-    ///
-    /// "How many parking spots are currently filled?"
+    /// Returns the number of items currently stored.
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
-    /// Returns true if the buffer is empty
+    /// Returns true if the buffer is empty.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    /// Returns true if the buffer is at capacity
-    ///
-    /// ## Plain English
-    ///
-    /// "Is every parking spot filled?"
+    /// Returns true if the buffer is at capacity.
     pub fn is_full(&self) -> bool {
         self.data.len() >= self.capacity
     }
 
-    /// Returns the maximum capacity
+    /// Returns the maximum capacity.
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
-    /// Clears all items from the buffer
-    ///
-    /// ## Plain English
-    ///
-    /// "Empty all the parking spots"
+    /// Clears all items from the buffer.
     pub fn clear(&mut self) {
         self.data.clear();
     }
 
-    /// Returns the oldest item without removing it
-    ///
-    /// ## Plain English
-    ///
-    /// "Show me the oldest item, but don't remove it"
+    /// Returns the oldest item without removing it.
     pub fn peek_oldest(&self) -> Option<&T> {
         self.data.front()
     }
 
-    /// Returns the newest item without removing it
-    ///
-    /// ## Plain English
-    ///
-    /// "Show me the most recently added item"
+    /// Returns the newest item without removing it.
     pub fn peek_newest(&self) -> Option<&T> {
         self.data.back()
     }
 
-    /// Returns an iterator over all items (oldest to newest)
+    /// Returns an iterator over all items (oldest to newest).
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.data.iter()
+    }
+
+    /// Returns all items as references (oldest first).
+    pub fn get_all(&self) -> Vec<&T> {
+        self.data.iter().collect()
+    }
+}
+
+impl<T: Clone> RingBuffer<T> {
+    /// Returns cloned copies of all items (oldest first).
+    pub fn get_all_cloned(&self) -> Vec<T> {
+        self.data.iter().cloned().collect()
     }
 }
 
@@ -184,7 +114,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_buffer_is_empty() {
+    fn test_new_buffer() {
         let buffer: RingBuffer<i32> = RingBuffer::new(5);
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
@@ -192,10 +122,10 @@ mod tests {
     }
 
     #[test]
-    fn test_push_single_item() {
+    fn test_push_single() {
         let mut buffer = RingBuffer::new(5);
         buffer.push(42);
-        
+
         assert!(!buffer.is_empty());
         assert_eq!(buffer.len(), 1);
         assert_eq!(buffer.peek_newest(), Some(&42));
@@ -203,47 +133,47 @@ mod tests {
     }
 
     #[test]
-    fn test_push_multiple_items() {
+    fn test_push_multiple() {
         let mut buffer = RingBuffer::new(5);
-        
+
         for i in 1..=3 {
             buffer.push(i);
         }
-        
+
         assert_eq!(buffer.len(), 3);
         assert_eq!(buffer.peek_oldest(), Some(&1));
         assert_eq!(buffer.peek_newest(), Some(&3));
-        
-        let all: Vec<_> = buffer.get_all().into_iter().copied().collect();
+
+        let all: Vec<_> = buffer.get_all_cloned();
         assert_eq!(all, vec![1, 2, 3]);
     }
 
     #[test]
-    fn test_overflow_removes_oldest() {
+    fn test_overflow() {
         let mut buffer = RingBuffer::new(3);
-        
-        // Add 5 items to a buffer of capacity 3
+
+        // Add 5 items to capacity-3 buffer
         for i in 1..=5 {
             buffer.push(i);
         }
-        
-        // Should only contain 3, 4, 5
+
+        // Should only have 3, 4, 5
         assert_eq!(buffer.len(), 3);
         assert_eq!(buffer.peek_oldest(), Some(&3));
         assert_eq!(buffer.peek_newest(), Some(&5));
-        
-        let all: Vec<_> = buffer.get_all().into_iter().copied().collect();
+
+        let all: Vec<_> = buffer.get_all_cloned();
         assert_eq!(all, vec![3, 4, 5]);
     }
 
     #[test]
     fn test_clear() {
         let mut buffer = RingBuffer::new(5);
-        
+
         for i in 1..=3 {
             buffer.push(i);
         }
-        
+
         buffer.clear();
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
@@ -252,17 +182,13 @@ mod tests {
     #[test]
     fn test_is_full() {
         let mut buffer = RingBuffer::new(3);
-        
+
         assert!(!buffer.is_full());
-        
         buffer.push(1);
         buffer.push(2);
         assert!(!buffer.is_full());
-        
         buffer.push(3);
         assert!(buffer.is_full());
-        
-        // Still full after overflow
         buffer.push(4);
         assert!(buffer.is_full());
     }
@@ -270,13 +196,12 @@ mod tests {
     #[test]
     fn test_iterator() {
         let mut buffer = RingBuffer::new(5);
-        
+
         for i in 1..=3 {
             buffer.push(i);
         }
-        
+
         let collected: Vec<_> = buffer.iter().copied().collect();
         assert_eq!(collected, vec![1, 2, 3]);
     }
 }
-
