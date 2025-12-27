@@ -1,0 +1,14 @@
+/Users/drdoomvr/Code/quest-shadowplay/src-tauri/target/release/deps/serde-e6b156801b10ddb3.d: /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/drdoomvr/Code/quest-shadowplay/src-tauri/target/release/build/serde-793add14e123bb74/out/private.rs
+
+/Users/drdoomvr/Code/quest-shadowplay/src-tauri/target/release/deps/libserde-e6b156801b10ddb3.rlib: /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/drdoomvr/Code/quest-shadowplay/src-tauri/target/release/build/serde-793add14e123bb74/out/private.rs
+
+/Users/drdoomvr/Code/quest-shadowplay/src-tauri/target/release/deps/libserde-e6b156801b10ddb3.rmeta: /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/drdoomvr/Code/quest-shadowplay/src-tauri/target/release/build/serde-793add14e123bb74/out/private.rs
+
+/Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/drdoomvr/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/drdoomvr/Code/quest-shadowplay/src-tauri/target/release/build/serde-793add14e123bb74/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/drdoomvr/Code/quest-shadowplay/src-tauri/target/release/build/serde-793add14e123bb74/out

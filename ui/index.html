@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quest Shadowplay</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <h1>🎮 Quest Shadowplay</h1>
+            <div class="status-badge" id="status-badge">
+                <span class="status-dot"></span>
+                <span class="status-text">Idle</span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Recording Controls -->
+            <section class="control-panel">
+                <div class="buffer-display">
+                    <div class="buffer-label">
+                        <span>Buffer</span>
+                        <span id="buffer-percent">0%</span>
+                    </div>
+                    <div class="buffer-bar">
+                        <div class="buffer-fill" id="buffer-fill"></div>
+                    </div>
+                    <div class="buffer-info">
+                        <span id="frame-count">0</span> / <span id="frame-capacity">900</span> frames
+                    </div>
+                </div>
+
+                <div class="control-buttons">
+                    <button class="btn btn-primary" id="btn-record" onclick="toggleRecording()">
+                        <span class="btn-icon">▶</span>
+                        <span class="btn-text">Start Recording</span>
+                    </button>
+                    <button class="btn btn-secondary" id="btn-save" onclick="saveClip()" disabled>
+                        <span class="btn-icon">💾</span>
+                        <span class="btn-text">Save Clip</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Saved Clips Grid -->
+            <section class="clips-section">
+                <div class="section-header">
+                    <h2>Saved Clips</h2>
+                    <span class="clip-count" id="clip-count">0 clips</span>
+                </div>
+                <div class="clips-grid" id="clips-grid">
+                    <!-- Clips will be loaded here -->
+                    <div class="empty-state" id="empty-state">
+                        <span class="empty-icon">📹</span>
+                        <p>No clips saved yet</p>
+                        <p class="empty-hint">Start recording and save your first clip!</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Quest Shadowplay v0.1.0 • VR Replay Buffer</p>
+        </footer>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
