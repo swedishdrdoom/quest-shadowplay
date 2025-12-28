@@ -209,3 +209,149 @@ pub async fn get_clip_thumbnail(
     Ok(None)
 }
 
+/// Result of MP4 export
+#[derive(serde::Serialize)]
+pub struct ExportResult {
+    pub success: bool,
+    pub message: String,
+    pub mp4_path: Option<String>,
+}
+
+/// Exports a clip to MP4 using ffmpeg
+#[tauri::command]
+pub async fn export_to_mp4(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<ExportResult, String> {
+    let qsp_path = state.clips_directory.join(&id);
+    
+    if !qsp_path.exists() {
+        return Ok(ExportResult {
+            success: false,
+            message: format!("Clip not found: {}", id),
+            mp4_path: None,
+        });
+    }
+
+    log::info!("Exporting {} to MP4...", id);
+
+    // Read the clip
+    let reader = match quest_shadowplay::encoder::FrameReader::open(qsp_path.to_str().unwrap_or("")) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(ExportResult {
+                success: false,
+                message: format!("Failed to read clip: {}", e),
+                mp4_path: None,
+            });
+        }
+    };
+
+    let frames = reader.frames();
+    if frames.is_empty() {
+        return Ok(ExportResult {
+            success: false,
+            message: "Clip has no frames".to_string(),
+            mp4_path: None,
+        });
+    }
+
+    log::info!("Exporting {} frames to MP4...", frames.len());
+
+    // Create temp directory for frames
+    let temp_dir = std::env::temp_dir().join("quest_shadowplay_export");
+    if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+        return Ok(ExportResult {
+            success: false,
+            message: format!("Failed to create temp dir: {}", e),
+            mp4_path: None,
+        });
+    }
+
+    // Write frames as JPEG files
+    for (i, frame) in frames.iter().enumerate() {
+        let frame_path = temp_dir.join(format!("frame_{:05}.jpg", i));
+        if let Err(e) = std::fs::write(&frame_path, &frame.data) {
+            return Ok(ExportResult {
+                success: false,
+                message: format!("Failed to write frame {}: {}", i, e),
+                mp4_path: None,
+            });
+        }
+    }
+
+    // Calculate FPS from timestamps
+    let fps = if frames.len() > 1 {
+        let first_ts = frames.first().unwrap().timestamp_ns;
+        let last_ts = frames.last().unwrap().timestamp_ns;
+        let duration_ns = last_ts.saturating_sub(first_ts);
+        if duration_ns > 0 {
+            let duration_secs = duration_ns as f64 / 1_000_000_000.0;
+            (frames.len() as f64 / duration_secs).round() as u32
+        } else {
+            30
+        }
+    } else {
+        30
+    };
+
+    log::info!("Detected FPS: {}", fps);
+
+    // Output MP4 path
+    let mp4_name = id.replace(".qsp", ".mp4");
+    let mp4_path = state.clips_directory.join(&mp4_name);
+
+    // Prepare paths for ffmpeg
+    let input_pattern = temp_dir.join("frame_%05d.jpg");
+    let input_pattern_str = input_pattern.to_str().unwrap().to_string();
+    let output_path_str = mp4_path.to_str().unwrap().to_string();
+    let fps_str = fps.to_string();
+
+    log::info!("Running ffmpeg: input={}, output={}, fps={}", input_pattern_str, output_path_str, fps_str);
+
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",  // Overwrite
+            "-framerate", &fps_str,
+            "-i", &input_pattern_str,
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            &output_path_str,
+        ])
+        .output();
+
+    // Cleanup temp files
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                log::info!("MP4 exported successfully: {:?}", mp4_path);
+                Ok(ExportResult {
+                    success: true,
+                    message: format!("Exported {} frames at {} FPS", frames.len(), fps),
+                    mp4_path: Some(mp4_path.to_string_lossy().to_string()),
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                log::error!("ffmpeg failed: {}", stderr);
+                Ok(ExportResult {
+                    success: false,
+                    message: format!("ffmpeg failed: {}", stderr.chars().take(200).collect::<String>()),
+                    mp4_path: None,
+                })
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to run ffmpeg: {}", e);
+            Ok(ExportResult {
+                success: false,
+                message: format!("Failed to run ffmpeg: {}. Is ffmpeg installed?", e),
+                mp4_path: None,
+            })
+        }
+    }
+}
+

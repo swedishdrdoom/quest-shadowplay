@@ -350,6 +350,10 @@ body {
     color: var(--danger);
 }
 
+.clip-action-btn.export:hover {
+    color: var(--accent);
+}
+
 /* Footer */
 .footer {
     padding: var(--spacing-lg) 0;

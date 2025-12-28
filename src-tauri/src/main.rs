@@ -40,6 +40,7 @@ fn main() {
             commands::list_clips,
             commands::delete_clip,
             commands::get_clip_thumbnail,
+            commands::export_to_mp4,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

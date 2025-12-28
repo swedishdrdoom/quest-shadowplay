@@ -169,6 +169,9 @@ function createClipCard(clip) {
             <div class="clip-size">${sizeDisplay}</div>
         </div>
         <div class="clip-actions">
+            <button class="clip-action-btn export" onclick="exportToMp4('${clip.id}', event)">
+                🎬 MP4
+            </button>
             <button class="clip-action-btn delete" onclick="deleteClip('${clip.id}', event)">
                 🗑️ Delete
             </button>
@@ -273,6 +276,44 @@ async function deleteClip(clipId, event) {
     } catch (error) {
         console.error('Delete failed:', error);
         showToast(`Delete failed: ${error}`, 'error');
+    }
+}
+
+/**
+ * Exports a clip to MP4
+ */
+async function exportToMp4(clipId, event) {
+    event.stopPropagation();
+    
+    const btn = event.target;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Exporting...';
+    
+    try {
+        showToast('Exporting to MP4...', 'info');
+        const result = await invoke('export_to_mp4', { id: clipId });
+        
+        if (result.success) {
+            showToast(`Exported! ${result.message}`, 'success');
+            if (result.mp4_path) {
+                console.log('MP4 saved to:', result.mp4_path);
+                // Try to open the folder containing the MP4
+                try {
+                    await invoke('open_folder', { path: result.mp4_path });
+                } catch (e) {
+                    // Ignore if open_folder not available
+                }
+            }
+        } else {
+            showToast(`Export failed: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('Export failed:', error);
+        showToast(`Export failed: ${error}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
     }
 }
 
