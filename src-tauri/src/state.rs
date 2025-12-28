@@ -8,7 +8,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use quest_shadowplay::{Config, SharedFrameBuffer, CapturedFrame};
+
+use crate::capture::{FrameCapture, create_capture};
 
 /// Shared application state
 pub struct AppState {
@@ -19,14 +22,13 @@ pub struct AppState {
     pub config: Config,
 
     /// Is recording currently active?
-    pub is_recording: AtomicBool,
+    is_recording: AtomicBool,
 
     /// Directory for saved clips
     pub clips_directory: PathBuf,
 
-    /// Capture handle (platform-specific)
-    #[cfg(target_os = "android")]
-    pub capture_handle: parking_lot::Mutex<Option<crate::capture_android::CaptureHandle>>,
+    /// Platform-agnostic capture handler
+    pub capture: Mutex<Box<dyn FrameCapture>>,
 }
 
 impl AppState {
@@ -49,13 +51,15 @@ impl AppState {
             config.target_fps,
         ));
 
+        let capture = create_capture();
+        log::info!("Using capture source: {}", capture.source_name());
+
         Ok(Self {
             buffer,
             config,
             is_recording: AtomicBool::new(false),
             clips_directory,
-            #[cfg(target_os = "android")]
-            capture_handle: Mutex::new(None),
+            capture: Mutex::new(capture),
         })
     }
 

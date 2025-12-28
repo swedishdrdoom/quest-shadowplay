@@ -8,11 +8,9 @@
     windows_subsystem = "windows"
 )]
 
+mod capture;
 mod commands;
 mod state;
-
-#[cfg(target_os = "android")]
-mod capture_android;
 
 use state::AppState;
 use std::sync::Arc;

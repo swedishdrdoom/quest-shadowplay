@@ -42,6 +42,11 @@ jni = "0.21"
 ndk = "0.9"
 ndk-context = "0.1"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS screen capture
+core-graphics = "0.24"
+core-foundation = "0.10"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

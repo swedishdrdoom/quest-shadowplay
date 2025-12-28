@@ -42,19 +42,22 @@ pub async fn start_recording(state: State<'_, Arc<AppState>>) -> Result<bool, St
 
     log::info!("Starting recording...");
 
-    // On Android, this would start MediaProjection capture
-    // For now, we just set the flag
-    state.set_recording(true);
+    // Create callback to push frames to buffer
+    let buffer = Arc::clone(&state.buffer);
+    let callback = std::sync::Arc::new(move |frame| {
+        buffer.push_frame(frame);
+    });
 
-    #[cfg(target_os = "android")]
+    // Start platform-specific capture
     {
-        // Start MediaProjection capture
-        if let Err(e) = crate::capture_android::start_capture(&state) {
-            state.set_recording(false);
+        let capture = state.capture.lock();
+        if let Err(e) = capture.start(callback) {
+            log::error!("Failed to start capture: {}", e);
             return Err(format!("Failed to start capture: {}", e));
         }
     }
 
+    state.set_recording(true);
     log::info!("Recording started");
     Ok(true)
 }
@@ -69,14 +72,13 @@ pub async fn stop_recording(state: State<'_, Arc<AppState>>) -> Result<bool, Str
 
     log::info!("Stopping recording...");
 
-    #[cfg(target_os = "android")]
+    // Stop platform-specific capture
     {
-        // Stop MediaProjection capture
-        crate::capture_android::stop_capture(&state);
+        let capture = state.capture.lock();
+        capture.stop();
     }
 
     state.set_recording(false);
-
     log::info!("Recording stopped");
     Ok(true)
 }
