@@ -73,9 +73,8 @@ pub struct NativeCaptureHandle {
     pub config: CaptureConfig,
 }
 
-// Swift functions we'll link against
+// Swift functions we'll link against (linked via build.rs)
 #[cfg(target_os = "macos")]
-#[link(name = "CaptureKit")]
 extern "C" {
     fn swift_capture_create(
         width: u32,
