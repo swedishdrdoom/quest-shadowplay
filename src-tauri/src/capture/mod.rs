@@ -2,7 +2,7 @@
 //!
 //! Defines the common interface for frame capture across platforms.
 //! Each platform implements this trait with its native capture API:
-//! - macOS: Core Graphics (CGDisplayStream)
+//! - macOS: ScreenCaptureKit + VideoToolbox (hardware accelerated)
 //! - Android: MediaProjection (future)
 //! - Other: Simulated test frames
 
@@ -17,10 +17,13 @@ mod simulated;
 #[allow(unused_imports)]
 pub use simulated::SimulatedCapture;
 
+// Old CoreGraphics-based capture (deprecated, kept for fallback)
 #[cfg(target_os = "macos")]
 mod macos;
+
+// New hardware-accelerated native capture
 #[cfg(target_os = "macos")]
-pub use macos::MacOSCapture;
+pub mod macos_native;
 
 #[cfg(target_os = "android")]
 mod android;
@@ -87,14 +90,17 @@ impl std::error::Error for CaptureError {}
 /// Creates the appropriate capture source for the current platform.
 ///
 /// Platform selection:
-/// - macOS: Real screen capture via Core Graphics
+/// - macOS: ScreenCaptureKit + VideoToolbox (hardware accelerated)
 /// - Android: MediaProjection (when implemented)
 /// - Other: Simulated test pattern frames
 pub fn create_capture() -> Box<dyn FrameCapture> {
     #[cfg(target_os = "macos")]
     {
+        // Use legacy CoreGraphics capture for now
+        // Native capture writes directly to MP4, different interface
         log::info!("Platform: macOS - using Core Graphics screen capture");
-        Box::new(MacOSCapture::new())
+        log::info!("Note: Use 'start_native_recording' for hardware-accelerated 60fps capture");
+        Box::new(macos::MacOSCapture::new())
     }
 
     #[cfg(target_os = "android")]

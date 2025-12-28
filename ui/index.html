@@ -46,6 +46,26 @@
                 </div>
             </section>
 
+            <!-- Native Recording (macOS Hardware Accelerated) -->
+            <section class="control-panel native-panel">
+                <div class="native-header">
+                    <h3>🎬 Native Recording (1080p 60fps)</h3>
+                    <span class="native-badge">Hardware Accelerated</span>
+                </div>
+                <div class="native-stats" id="native-stats">
+                    <span>Frames: <strong id="native-frames">0</strong></span>
+                    <span>Dropped: <strong id="native-dropped">0</strong></span>
+                    <span>Encoded: <strong id="native-encoded">0</strong></span>
+                </div>
+                <div class="control-buttons">
+                    <button class="btn btn-native" id="btn-native-record" onclick="toggleNativeRecording()">
+                        <span class="btn-icon">⏺</span>
+                        <span class="btn-text">Start Native Recording</span>
+                    </button>
+                </div>
+                <p class="native-hint">Records directly to MP4 using ScreenCaptureKit + VideoToolbox</p>
+            </section>
+
             <!-- Saved Clips Grid -->
             <section class="clips-section">
                 <div class="section-header">

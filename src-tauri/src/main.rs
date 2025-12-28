@@ -41,6 +41,10 @@ fn main() {
             commands::delete_clip,
             commands::get_clip_thumbnail,
             commands::export_to_mp4,
+            // Native hardware-accelerated recording (macOS)
+            commands::start_native_recording,
+            commands::stop_native_recording,
+            commands::get_native_recording_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

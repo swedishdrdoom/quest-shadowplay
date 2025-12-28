@@ -407,6 +407,75 @@ body {
     }
 }
 
+/* Native Recording Panel */
+.native-panel {
+    border: 1px solid var(--accent-primary);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), transparent);
+}
+
+.native-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.native-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.native-badge {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    background: var(--accent-primary);
+    color: white;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.native-stats {
+    display: flex;
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.native-stats strong {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.native-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: var(--spacing-sm);
+    text-align: center;
+}
+
+.btn-native {
+    background: linear-gradient(135deg, var(--accent-primary), #4f46e5);
+    color: white;
+}
+
+.btn-native:hover:not(:disabled) {
+    background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
+    box-shadow: 0 4px 20px var(--accent-glow);
+}
+
+.btn-native.recording {
+    background: linear-gradient(135deg, var(--recording), #dc2626);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--recording-glow); }
+    50% { box-shadow: 0 0 20px 5px var(--recording-glow); }
+}
+
 /* Responsive */
 @media (max-width: 600px) {
     .control-buttons {
@@ -415,6 +484,11 @@ body {
     
     .clips-grid {
         grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .native-stats {
+        flex-wrap: wrap;
+        gap: var(--spacing-sm);
     }
 }
 

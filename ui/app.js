@@ -9,7 +9,9 @@
 // ============================================
 
 let isRecording = false;
+let isNativeRecording = false;
 let statusInterval = null;
+let nativeStatsInterval = null;
 
 // ============================================
 // TAURI BRIDGE
@@ -276,6 +278,102 @@ async function deleteClip(clipId, event) {
     } catch (error) {
         console.error('Delete failed:', error);
         showToast(`Delete failed: ${error}`, 'error');
+    }
+}
+
+// ============================================
+// NATIVE RECORDING (Hardware Accelerated)
+// ============================================
+
+/**
+ * Toggles native recording on/off
+ */
+async function toggleNativeRecording() {
+    const btn = document.getElementById('btn-native-record');
+    btn.disabled = true;
+    
+    try {
+        if (isNativeRecording) {
+            const result = await invoke('stop_native_recording');
+            if (result.success) {
+                showToast(result.message, 'success');
+                isNativeRecording = false;
+                stopNativeStatsPolling();
+                await loadClips(); // Reload to show new MP4
+            } else {
+                showToast(result.message, 'error');
+            }
+        } else {
+            const result = await invoke('start_native_recording');
+            if (result.success) {
+                showToast(result.message, 'success');
+                isNativeRecording = true;
+                startNativeStatsPolling();
+                if (result.output_path) {
+                    console.log('Recording to:', result.output_path);
+                }
+            } else {
+                showToast(result.message, 'error');
+            }
+        }
+        updateNativeRecordingUI();
+    } catch (error) {
+        console.error('Native recording toggle failed:', error);
+        showToast(`Error: ${error}`, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+/**
+ * Updates the native recording UI
+ */
+function updateNativeRecordingUI() {
+    const btn = document.getElementById('btn-native-record');
+    
+    if (isNativeRecording) {
+        btn.classList.add('recording');
+        btn.querySelector('.btn-icon').textContent = '⏹';
+        btn.querySelector('.btn-text').textContent = 'Stop Native Recording';
+    } else {
+        btn.classList.remove('recording');
+        btn.querySelector('.btn-icon').textContent = '⏺';
+        btn.querySelector('.btn-text').textContent = 'Start Native Recording';
+    }
+}
+
+/**
+ * Updates native recording stats
+ */
+async function updateNativeStats() {
+    try {
+        const stats = await invoke('get_native_recording_stats');
+        document.getElementById('native-frames').textContent = stats.frames_captured;
+        document.getElementById('native-dropped').textContent = stats.frames_dropped;
+        document.getElementById('native-encoded').textContent = stats.frames_encoded;
+        
+        isNativeRecording = stats.is_recording;
+        updateNativeRecordingUI();
+    } catch (error) {
+        console.error('Failed to get native stats:', error);
+    }
+}
+
+/**
+ * Starts polling for native stats
+ */
+function startNativeStatsPolling() {
+    if (nativeStatsInterval) return;
+    nativeStatsInterval = setInterval(updateNativeStats, 200); // 5Hz updates
+}
+
+/**
+ * Stops polling for native stats
+ */
+function stopNativeStatsPolling() {
+    if (nativeStatsInterval) {
+        clearInterval(nativeStatsInterval);
+        nativeStatsInterval = null;
     }
 }
 

@@ -10,6 +10,11 @@ use crate::state::{AppState, ClipInfo};
 use quest_shadowplay::encoder::VideoEncoder;
 use quest_shadowplay::storage::StorageManager;
 
+#[cfg(target_os = "macos")]
+use crate::capture::macos_native::{CaptureConfig, NativeCaptureHandle};
+#[cfg(target_os = "macos")]
+use std::sync::Mutex as StdMutex;
+
 /// Status information sent to the frontend
 #[derive(serde::Serialize)]
 pub struct StatusInfo {
@@ -352,6 +357,184 @@ pub async fn export_to_mp4(
                 mp4_path: None,
             })
         }
+    }
+}
+
+// ============================================
+// NATIVE RECORDING COMMANDS (macOS only)
+// ============================================
+
+/// Result of native recording operations
+#[derive(serde::Serialize)]
+pub struct NativeRecordingResult {
+    pub success: bool,
+    pub message: String,
+    pub output_path: Option<String>,
+}
+
+/// Statistics from native recording
+#[derive(serde::Serialize)]
+pub struct NativeRecordingStats {
+    pub is_recording: bool,
+    pub frames_captured: u64,
+    pub frames_dropped: u64,
+    pub frames_encoded: u64,
+}
+
+// Global handle for native capture (macOS only)
+#[cfg(target_os = "macos")]
+static NATIVE_CAPTURE: std::sync::OnceLock<StdMutex<Option<NativeCaptureHandle>>> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn get_native_capture() -> &'static StdMutex<Option<NativeCaptureHandle>> {
+    NATIVE_CAPTURE.get_or_init(|| StdMutex::new(None))
+}
+
+/// Starts native hardware-accelerated recording (macOS only)
+/// Records directly to MP4 at 1080p 60fps using ScreenCaptureKit + VideoToolbox
+#[tauri::command]
+pub async fn start_native_recording(
+    state: State<'_, Arc<AppState>>,
+) -> Result<NativeRecordingResult, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut capture_guard = get_native_capture().lock().unwrap();
+        
+        if capture_guard.is_some() {
+            return Ok(NativeRecordingResult {
+                success: false,
+                message: "Native recording already active".to_string(),
+                output_path: None,
+            });
+        }
+
+        // Generate output path
+        let output_path = state.clips_directory.join(format!(
+            "native_{}.mp4",
+            chrono::Local::now().format("%Y%m%d_%H%M%S")
+        ));
+
+        // Create capture with default config (1080p60)
+        let config = CaptureConfig::default();
+        
+        match NativeCaptureHandle::new(config) {
+            Ok(handle) => {
+                match handle.start(&output_path) {
+                    Ok(()) => {
+                        let path_str = output_path.to_string_lossy().to_string();
+                        *capture_guard = Some(handle);
+                        log::info!("Native recording started: {}", path_str);
+                        Ok(NativeRecordingResult {
+                            success: true,
+                            message: "Recording at 1080p 60fps with hardware encoding".to_string(),
+                            output_path: Some(path_str),
+                        })
+                    }
+                    Err(e) => {
+                        Ok(NativeRecordingResult {
+                            success: false,
+                            message: format!("Failed to start: {}", e),
+                            output_path: None,
+                        })
+                    }
+                }
+            }
+            Err(e) => {
+                Ok(NativeRecordingResult {
+                    success: false,
+                    message: format!("Failed to create capture: {}", e),
+                    output_path: None,
+                })
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = state;
+        Ok(NativeRecordingResult {
+            success: false,
+            message: "Native recording only available on macOS".to_string(),
+            output_path: None,
+        })
+    }
+}
+
+/// Stops native recording and finalizes the MP4
+#[tauri::command]
+pub async fn stop_native_recording() -> Result<NativeRecordingResult, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut capture_guard = get_native_capture().lock().unwrap();
+        
+        if let Some(handle) = capture_guard.take() {
+            handle.update_stats();
+            let captured = handle.stats.frames_captured.load(std::sync::atomic::Ordering::Relaxed);
+            let dropped = handle.stats.frames_dropped.load(std::sync::atomic::Ordering::Relaxed);
+            let encoded = handle.stats.frames_encoded.load(std::sync::atomic::Ordering::Relaxed);
+            
+            handle.stop();
+            
+            log::info!("Native recording stopped. Captured: {}, Dropped: {}, Encoded: {}", 
+                captured, dropped, encoded);
+            
+            Ok(NativeRecordingResult {
+                success: true,
+                message: format!("Recorded {} frames ({} dropped)", encoded, dropped),
+                output_path: None,
+            })
+        } else {
+            Ok(NativeRecordingResult {
+                success: false,
+                message: "No native recording active".to_string(),
+                output_path: None,
+            })
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(NativeRecordingResult {
+            success: false,
+            message: "Native recording only available on macOS".to_string(),
+            output_path: None,
+        })
+    }
+}
+
+/// Gets statistics from native recording
+#[tauri::command]
+pub async fn get_native_recording_stats() -> Result<NativeRecordingStats, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let capture_guard = get_native_capture().lock().unwrap();
+        
+        if let Some(handle) = capture_guard.as_ref() {
+            handle.update_stats();
+            Ok(NativeRecordingStats {
+                is_recording: handle.is_active(),
+                frames_captured: handle.stats.frames_captured.load(std::sync::atomic::Ordering::Relaxed),
+                frames_dropped: handle.stats.frames_dropped.load(std::sync::atomic::Ordering::Relaxed),
+                frames_encoded: handle.stats.frames_encoded.load(std::sync::atomic::Ordering::Relaxed),
+            })
+        } else {
+            Ok(NativeRecordingStats {
+                is_recording: false,
+                frames_captured: 0,
+                frames_dropped: 0,
+                frames_encoded: 0,
+            })
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(NativeRecordingStats {
+            is_recording: false,
+            frames_captured: 0,
+            frames_dropped: 0,
+            frames_encoded: 0,
+        })
     }
 }
 
