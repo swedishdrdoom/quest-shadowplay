@@ -129,6 +129,10 @@ pub async fn save_clip(state: State<'_, Arc<AppState>>) -> Result<SaveResult, St
 
             log::info!("Clip saved: {}", output_path);
 
+            // Clear the buffer after successful save
+            state.buffer.clear();
+            log::info!("Buffer cleared after save");
+
             Ok(SaveResult {
                 success: true,
                 message: format!("Saved {} frames", frame_count),
