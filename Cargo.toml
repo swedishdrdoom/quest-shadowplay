@@ -34,6 +34,9 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 # Image processing (pure Rust, no native deps)
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
+# Fast JPEG encoding with quality control
+jpeg-encoder = "0.6"
+
 # ============================================
 # ANDROID-SPECIFIC (only compiled for Android)
 # ============================================

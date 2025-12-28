@@ -17,8 +17,9 @@ use quest_shadowplay::CapturedFrame;
 
 use super::{CaptureError, FrameCapture};
 
-/// Target width for captured frames (downscaled for performance)
-const TARGET_WIDTH: u32 = 1280;
+/// Target resolution: 1080p (1920x1080) for testing
+const TARGET_WIDTH: u32 = 1920;
+const TARGET_HEIGHT: u32 = 1080;
 
 /// macOS screen capture using Core Graphics.
 ///
@@ -55,7 +56,7 @@ impl FrameCapture for MacOSCapture {
         let fps = self.fps;
 
         thread::spawn(move || {
-            log::info!("macOS capture started at {} FPS (downscaled to {}px wide)", fps, TARGET_WIDTH);
+            log::info!("macOS capture started: {}x{} @ {} FPS", TARGET_WIDTH, TARGET_HEIGHT, fps);
 
             let compressor = FrameCompressor::new(70); // Lower quality for speed
             let frame_duration = Duration::from_micros(1_000_000 / fps as u64);
@@ -134,32 +135,35 @@ fn capture_main_display(compressor: &FrameCompressor) -> Result<CapturedFrame, S
     let src_height = image.height() as u32;
     let bytes_per_row = image.bytes_per_row();
 
-    // Calculate target dimensions (maintain aspect ratio)
-    let scale = TARGET_WIDTH as f32 / src_width as f32;
+    // Fixed 1080p output
     let dst_width = TARGET_WIDTH;
-    let dst_height = (src_height as f32 * scale) as u32;
+    let dst_height = TARGET_HEIGHT;
+    
+    // Calculate scale factors
+    let scale_x = src_width as f32 / dst_width as f32;
+    let scale_y = src_height as f32 / dst_height as f32;
 
     // Get raw pixel data
     let data = image.data();
     let pixel_data = data.bytes();
 
     // Downscale using nearest-neighbor (fast) while converting BGRA→RGBA
-    let mut rgba = Vec::with_capacity((dst_width * dst_height * 4) as usize);
+    let mut rgba = vec![0u8; (dst_width * dst_height * 4) as usize];
     
     for dst_y in 0..dst_height {
-        let src_y = (dst_y as f32 / scale) as u32;
+        let src_y = ((dst_y as f32 * scale_y) as u32).min(src_height - 1);
+        let dst_row_offset = (dst_y * dst_width * 4) as usize;
+        
         for dst_x in 0..dst_width {
-            let src_x = (dst_x as f32 / scale) as u32;
-            let idx = (src_y as usize * bytes_per_row) + (src_x as usize * 4);
+            let src_x = ((dst_x as f32 * scale_x) as u32).min(src_width - 1);
+            let src_idx = (src_y as usize * bytes_per_row) + (src_x as usize * 4);
+            let dst_idx = dst_row_offset + (dst_x * 4) as usize;
             
-            if idx + 3 < pixel_data.len() {
-                rgba.push(pixel_data[idx + 2]); // R (from B position)
-                rgba.push(pixel_data[idx + 1]); // G
-                rgba.push(pixel_data[idx]);     // B (from R position)
-                rgba.push(255);                 // A
-            } else {
-                // Fallback for edge cases
-                rgba.extend_from_slice(&[0, 0, 0, 255]);
+            if src_idx + 3 < pixel_data.len() {
+                rgba[dst_idx] = pixel_data[src_idx + 2];     // R (from B)
+                rgba[dst_idx + 1] = pixel_data[src_idx + 1]; // G
+                rgba[dst_idx + 2] = pixel_data[src_idx];     // B (from R)
+                rgba[dst_idx + 3] = 255;                     // A
             }
         }
     }

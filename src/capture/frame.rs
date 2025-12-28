@@ -2,10 +2,9 @@
 //!
 //! Structures for representing captured VR frames.
 
-use std::io::Cursor;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use image::{ImageBuffer, ImageFormat, Rgba};
+use jpeg_encoder::{ColorType, Encoder};
 
 // ============================================
 // CAPTURED FRAME
@@ -144,22 +143,26 @@ impl FrameCompressor {
             });
         }
 
-        // Create image from raw data
-        let img: ImageBuffer<Rgba<u8>, _> =
-            ImageBuffer::from_raw(width, height, raw_rgba.to_vec())
-                .ok_or(CompressionError::InvalidData)?;
+        // Convert RGBA to RGB (strip alpha channel) - do this in-place for speed
+        let pixel_count = (width * height) as usize;
+        let mut rgb = Vec::with_capacity(pixel_count * 3);
+        for i in 0..pixel_count {
+            let base = i * 4;
+            rgb.push(raw_rgba[base]);     // R
+            rgb.push(raw_rgba[base + 1]); // G
+            rgb.push(raw_rgba[base + 2]); // B
+            // Skip alpha
+        }
 
-        // Encode to JPEG
-        let mut output = Cursor::new(Vec::new());
+        // Encode to JPEG using fast encoder with quality control
+        let mut output = Vec::with_capacity(pixel_count / 4); // Estimate ~4:1 compression
+        let encoder = Encoder::new(&mut output, self.quality);
         
-        // Convert RGBA to RGB for JPEG (no alpha channel support)
-        let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
-        
-        rgb_img
-            .write_to(&mut output, ImageFormat::Jpeg)
+        encoder
+            .encode(&rgb, width as u16, height as u16, ColorType::Rgb)
             .map_err(|e| CompressionError::EncodingFailed(e.to_string()))?;
 
-        Ok(output.into_inner())
+        Ok(output)
     }
 
     /// Returns the quality setting.
