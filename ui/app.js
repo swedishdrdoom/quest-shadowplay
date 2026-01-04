@@ -189,8 +189,11 @@ function createClipCard(clip) {
                 <button class="clip-action-btn open" data-action="open">
                     ▶️ Play
                 </button>
+                <button class="clip-action-btn trim" data-action="trim">
+                    ✂️ Trim
+                </button>
                 <button class="clip-action-btn reveal" data-action="reveal">
-                    📁 Reveal
+                    📁
                 </button>
             ` : `
                 <button class="clip-action-btn export" data-action="export">
@@ -198,7 +201,7 @@ function createClipCard(clip) {
                 </button>
             `}
             <button class="clip-action-btn delete" data-action="delete">
-                🗑️ Delete
+                🗑️
             </button>
         </div>
     `;
@@ -593,6 +596,9 @@ function setupClipsGridEventDelegation() {
                 case 'export':
                     await exportToMp4(clipId);
                     break;
+                case 'trim':
+                    await openTrimModal(clipId);
+                    break;
             }
             return;
         }
@@ -645,6 +651,351 @@ async function handleDeleteClick(clipId) {
         showToast(`Delete failed: ${error}`, 'error');
     }
 }
+
+// ============================================
+// VIDEO TRIMMING
+// ============================================
+
+// Trim modal state
+let trimState = {
+    clipId: null,
+    clipPath: null,
+    duration: 0,
+    startTime: 0,
+    endTime: 0,
+    isPlaying: false,
+};
+
+/**
+ * Opens the trim modal for a clip
+ */
+async function openTrimModal(clipId) {
+    console.log('Opening trim modal for:', clipId);
+    
+    const modal = document.getElementById('trim-modal');
+    const video = document.getElementById('trim-video');
+    
+    try {
+        // Get clip details
+        showToast('Loading clip info...', 'info');
+        const clipInfo = await invoke('get_clip_details', { id: clipId });
+        console.log('Clip info:', clipInfo);
+        
+        // Update state
+        trimState.clipId = clipId;
+        trimState.clipPath = clipInfo.path;
+        trimState.duration = clipInfo.duration_secs;
+        trimState.startTime = 0;
+        trimState.endTime = clipInfo.duration_secs;
+        
+        // Update info display
+        document.getElementById('trim-duration').textContent = clipInfo.duration_formatted;
+        document.getElementById('trim-resolution').textContent = `${clipInfo.width}×${clipInfo.height}`;
+        document.getElementById('trim-size').textContent = clipInfo.file_size_formatted;
+        document.getElementById('trim-total-time').textContent = formatTime(clipInfo.duration_secs);
+        
+        // Set up video source
+        video.src = convertFileSrc(clipInfo.path);
+        video.currentTime = 0;
+        
+        // Set up inputs
+        document.getElementById('trim-start-input').value = 0;
+        document.getElementById('trim-start-input').max = clipInfo.duration_secs;
+        document.getElementById('trim-end-input').value = clipInfo.duration_secs.toFixed(1);
+        document.getElementById('trim-end-input').max = clipInfo.duration_secs;
+        
+        // Load thumbnails for timeline
+        loadTimelineThumbnails(clipId, 10);
+        
+        // Update timeline handles
+        updateTimelineSelection();
+        updateTimeLabels();
+        
+        // Show modal
+        modal.style.display = 'flex';
+        
+        // Set up video event listeners
+        video.onloadedmetadata = () => {
+            console.log('Video loaded, duration:', video.duration);
+        };
+        
+        video.ontimeupdate = () => {
+            updatePlayhead();
+            document.getElementById('trim-current-time').textContent = formatTime(video.currentTime);
+        };
+        
+        video.onended = () => {
+            trimState.isPlaying = false;
+            document.getElementById('btn-play-pause').textContent = '▶';
+        };
+        
+    } catch (error) {
+        console.error('Failed to open trim modal:', error);
+        showToast(`Failed to load clip: ${error}`, 'error');
+    }
+}
+
+/**
+ * Converts a file path to a Tauri asset URL
+ */
+function convertFileSrc(path) {
+    if (window.__TAURI__ && window.__TAURI__.core.convertFileSrc) {
+        return window.__TAURI__.core.convertFileSrc(path);
+    }
+    // Fallback for development
+    return 'file://' + path;
+}
+
+/**
+ * Closes the trim modal
+ */
+function closeTrimModal() {
+    const modal = document.getElementById('trim-modal');
+    const video = document.getElementById('trim-video');
+    
+    video.pause();
+    video.src = '';
+    trimState.isPlaying = false;
+    
+    modal.style.display = 'none';
+}
+
+/**
+ * Toggles video preview playback
+ */
+function toggleTrimPreview() {
+    const video = document.getElementById('trim-video');
+    const btn = document.getElementById('btn-play-pause');
+    
+    if (trimState.isPlaying) {
+        video.pause();
+        trimState.isPlaying = false;
+        btn.textContent = '▶';
+    } else {
+        // Start from selection start if at beginning or past selection end
+        if (video.currentTime < trimState.startTime || video.currentTime >= trimState.endTime) {
+            video.currentTime = trimState.startTime;
+        }
+        video.play();
+        trimState.isPlaying = true;
+        btn.textContent = '⏸';
+        
+        // Stop at selection end
+        const checkEnd = () => {
+            if (video.currentTime >= trimState.endTime) {
+                video.pause();
+                trimState.isPlaying = false;
+                btn.textContent = '▶';
+            } else if (trimState.isPlaying) {
+                requestAnimationFrame(checkEnd);
+            }
+        };
+        requestAnimationFrame(checkEnd);
+    }
+}
+
+/**
+ * Loads timeline thumbnails
+ */
+async function loadTimelineThumbnails(clipId, count) {
+    const container = document.getElementById('timeline-thumbnails');
+    container.innerHTML = '';
+    
+    try {
+        const result = await invoke('get_timeline_thumbnails', { id: clipId, count: count });
+        console.log('Thumbnails loaded:', result.count);
+        
+        for (const thumbUrl of result.thumbnails) {
+            const div = document.createElement('div');
+            div.className = 'timeline-thumbnail';
+            if (thumbUrl) {
+                div.style.backgroundImage = `url(${thumbUrl})`;
+            }
+            container.appendChild(div);
+        }
+    } catch (error) {
+        console.error('Failed to load thumbnails:', error);
+        // Create empty placeholders
+        for (let i = 0; i < count; i++) {
+            const div = document.createElement('div');
+            div.className = 'timeline-thumbnail';
+            container.appendChild(div);
+        }
+    }
+}
+
+/**
+ * Updates the timeline selection overlay and handles
+ */
+function updateTimelineSelection() {
+    const timeline = document.getElementById('trim-timeline');
+    const selection = document.getElementById('timeline-selection');
+    const handleStart = document.getElementById('handle-start');
+    const handleEnd = document.getElementById('handle-end');
+    
+    const timelineWidth = timeline.offsetWidth;
+    const startPercent = (trimState.startTime / trimState.duration) * 100;
+    const endPercent = (trimState.endTime / trimState.duration) * 100;
+    
+    // Position selection
+    selection.style.left = `${startPercent}%`;
+    selection.style.width = `${endPercent - startPercent}%`;
+    
+    // Position handles
+    handleStart.style.left = `${startPercent}%`;
+    handleEnd.style.left = `${endPercent}%`;
+    handleEnd.style.transform = 'translateX(-100%)';
+}
+
+/**
+ * Updates the playhead position
+ */
+function updatePlayhead() {
+    const video = document.getElementById('trim-video');
+    const playhead = document.getElementById('timeline-playhead');
+    
+    const percent = (video.currentTime / trimState.duration) * 100;
+    playhead.style.left = `${percent}%`;
+}
+
+/**
+ * Updates the time labels
+ */
+function updateTimeLabels() {
+    document.getElementById('label-start').textContent = formatTime(trimState.startTime);
+    document.getElementById('label-end').textContent = formatTime(trimState.endTime);
+    
+    const selectionDuration = trimState.endTime - trimState.startTime;
+    document.getElementById('label-selection').textContent = `Selected: ${formatTime(selectionDuration)}`;
+}
+
+/**
+ * Formats time in M:SS.s format
+ */
+function formatTime(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toFixed(1).padStart(4, '0')}`;
+}
+
+/**
+ * Sets up timeline interaction
+ */
+function setupTimelineInteraction() {
+    const timeline = document.getElementById('trim-timeline');
+    const handleStart = document.getElementById('handle-start');
+    const handleEnd = document.getElementById('handle-end');
+    const startInput = document.getElementById('trim-start-input');
+    const endInput = document.getElementById('trim-end-input');
+    
+    let dragging = null;
+    
+    // Handle dragging
+    function onMouseDown(e, handle) {
+        e.preventDefault();
+        dragging = handle;
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    }
+    
+    function onMouseMove(e) {
+        if (!dragging) return;
+        
+        const rect = timeline.getBoundingClientRect();
+        let percent = (e.clientX - rect.left) / rect.width;
+        percent = Math.max(0, Math.min(1, percent));
+        const time = percent * trimState.duration;
+        
+        if (dragging === 'start') {
+            trimState.startTime = Math.min(time, trimState.endTime - 0.1);
+            startInput.value = trimState.startTime.toFixed(1);
+        } else if (dragging === 'end') {
+            trimState.endTime = Math.max(time, trimState.startTime + 0.1);
+            endInput.value = trimState.endTime.toFixed(1);
+        }
+        
+        updateTimelineSelection();
+        updateTimeLabels();
+    }
+    
+    function onMouseUp() {
+        dragging = null;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+    }
+    
+    handleStart.addEventListener('mousedown', (e) => onMouseDown(e, 'start'));
+    handleEnd.addEventListener('mousedown', (e) => onMouseDown(e, 'end'));
+    
+    // Click on timeline to seek
+    timeline.addEventListener('click', (e) => {
+        if (e.target.classList.contains('timeline-handle')) return;
+        
+        const rect = timeline.getBoundingClientRect();
+        const percent = (e.clientX - rect.left) / rect.width;
+        const time = percent * trimState.duration;
+        
+        const video = document.getElementById('trim-video');
+        video.currentTime = time;
+    });
+    
+    // Input changes
+    startInput.addEventListener('change', () => {
+        let value = parseFloat(startInput.value) || 0;
+        value = Math.max(0, Math.min(value, trimState.endTime - 0.1));
+        trimState.startTime = value;
+        startInput.value = value.toFixed(1);
+        updateTimelineSelection();
+        updateTimeLabels();
+    });
+    
+    endInput.addEventListener('change', () => {
+        let value = parseFloat(endInput.value) || trimState.duration;
+        value = Math.max(trimState.startTime + 0.1, Math.min(value, trimState.duration));
+        trimState.endTime = value;
+        endInput.value = value.toFixed(1);
+        updateTimelineSelection();
+        updateTimeLabels();
+    });
+}
+
+/**
+ * Executes the trim operation
+ */
+async function executeTrim() {
+    const btn = document.getElementById('btn-trim');
+    btn.disabled = true;
+    btn.querySelector('.btn-text').textContent = 'Trimming...';
+    
+    try {
+        console.log(`Trimming ${trimState.clipId} from ${trimState.startTime}s to ${trimState.endTime}s`);
+        
+        const result = await invoke('trim_clip', {
+            id: trimState.clipId,
+            startTime: trimState.startTime,
+            endTime: trimState.endTime,
+        });
+        
+        if (result.success) {
+            showToast(`${result.message} (${result.new_clip_size})`, 'success');
+            closeTrimModal();
+            await loadClips();
+        } else {
+            showToast(`Trim failed: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('Trim failed:', error);
+        showToast(`Trim failed: ${error}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.querySelector('.btn-text').textContent = 'Trim Clip';
+    }
+}
+
+// Set up timeline interaction when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    setupTimelineInteraction();
+});
 
 // Start when DOM is ready
 if (document.readyState === 'loading') {

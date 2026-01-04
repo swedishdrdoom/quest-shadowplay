@@ -18,8 +18,9 @@ fn build_swift() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     println!("cargo:rerun-if-changed=swift/CaptureController.swift");
+    println!("cargo:rerun-if-changed=swift/VideoTrimmer.swift");
 
-    // Compile Swift to object file
+    // Compile Swift to object file (both source files)
     let status = Command::new("swiftc")
         .args([
             "-O",
@@ -30,6 +31,7 @@ fn build_swift() {
             "-static",
             "-o", out_dir.join("CaptureKit.o").to_str().unwrap(),
             swift_dir.join("CaptureController.swift").to_str().unwrap(),
+            swift_dir.join("VideoTrimmer.swift").to_str().unwrap(),
         ])
         .status()
         .expect("Failed to run swiftc");
@@ -64,6 +66,7 @@ fn build_swift() {
     println!("cargo:rustc-link-lib=framework=AVFoundation");
     println!("cargo:rustc-link-lib=framework=Foundation");
     println!("cargo:rustc-link-lib=framework=CoreGraphics");
+    println!("cargo:rustc-link-lib=framework=AppKit");  // For NSImage in VideoTrimmer
 
     // Link Swift standard library (required for Swift code)
     let swift_lib_dir = get_swift_lib_dir();

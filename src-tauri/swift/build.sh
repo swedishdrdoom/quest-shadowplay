@@ -12,6 +12,9 @@ mkdir -p "$OUT_DIR"
 
 echo "Building Swift capture library..."
 
+# Swift source files
+SWIFT_FILES="CaptureController.swift VideoTrimmer.swift"
+
 # Compile Swift to object file
 swiftc \
     -O \
@@ -20,7 +23,7 @@ swiftc \
     -emit-module \
     -module-name CaptureKit \
     -o "$OUT_DIR/libCaptureKit.dylib" \
-    CaptureController.swift \
+    $SWIFT_FILES \
     -Xlinker -install_name -Xlinker @rpath/libCaptureKit.dylib
 
 # Also create a static library
@@ -30,7 +33,7 @@ swiftc \
     -emit-object \
     -module-name CaptureKit \
     -o "$OUT_DIR/CaptureKit.o" \
-    CaptureController.swift
+    $SWIFT_FILES
 
 ar rcs "$OUT_DIR/libCaptureKit.a" "$OUT_DIR/CaptureKit.o"
 

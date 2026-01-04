@@ -11,6 +11,7 @@
 mod capture;
 mod commands;
 mod state;
+mod trimmer;
 
 use state::AppState;
 use std::sync::Arc;
@@ -55,6 +56,10 @@ fn main() {
             commands::start_native_recording,
             commands::stop_native_recording,
             commands::get_native_recording_stats,
+            // Video trimming commands
+            commands::get_clip_details,
+            commands::get_timeline_thumbnails,
+            commands::trim_clip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

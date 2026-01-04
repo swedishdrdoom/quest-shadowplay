@@ -117,6 +117,82 @@
     <!-- Toast Notifications -->
     <div class="toast-container" id="toast-container"></div>
 
+    <!-- Trim Modal -->
+    <div class="modal-overlay" id="trim-modal" style="display: none;">
+        <div class="modal trim-modal">
+            <div class="modal-header">
+                <h2>✂️ Trim Clip</h2>
+                <button class="modal-close" onclick="closeTrimModal()">×</button>
+            </div>
+            
+            <div class="modal-body">
+                <!-- Video Preview -->
+                <div class="video-preview-container">
+                    <video id="trim-video" class="trim-video"></video>
+                    <div class="video-controls">
+                        <button class="video-btn" id="btn-play-pause" onclick="toggleTrimPreview()">▶</button>
+                        <span class="video-time" id="trim-current-time">0:00.0</span>
+                        <span>/</span>
+                        <span class="video-time" id="trim-total-time">0:00.0</span>
+                    </div>
+                </div>
+
+                <!-- Clip Info -->
+                <div class="trim-info" id="trim-info">
+                    <span class="trim-info-item">Duration: <strong id="trim-duration">--</strong></span>
+                    <span class="trim-info-item">Resolution: <strong id="trim-resolution">--</strong></span>
+                    <span class="trim-info-item">Size: <strong id="trim-size">--</strong></span>
+                </div>
+
+                <!-- Timeline -->
+                <div class="timeline-container">
+                    <div class="timeline" id="trim-timeline">
+                        <!-- Thumbnail strip -->
+                        <div class="timeline-thumbnails" id="timeline-thumbnails"></div>
+                        
+                        <!-- Selection overlay -->
+                        <div class="timeline-selection" id="timeline-selection"></div>
+                        
+                        <!-- Handles -->
+                        <div class="timeline-handle handle-start" id="handle-start" draggable="true"></div>
+                        <div class="timeline-handle handle-end" id="handle-end" draggable="true"></div>
+                        
+                        <!-- Playhead -->
+                        <div class="timeline-playhead" id="timeline-playhead"></div>
+                    </div>
+                    
+                    <!-- Time labels -->
+                    <div class="timeline-labels">
+                        <span class="time-label" id="label-start">0:00.0</span>
+                        <span class="time-label time-label-selection" id="label-selection">Selected: 0:00.0</span>
+                        <span class="time-label" id="label-end">0:00.0</span>
+                    </div>
+                </div>
+
+                <!-- Trim Controls -->
+                <div class="trim-controls">
+                    <div class="trim-inputs">
+                        <label>
+                            Start:
+                            <input type="number" id="trim-start-input" step="0.1" min="0" value="0">
+                        </label>
+                        <label>
+                            End:
+                            <input type="number" id="trim-end-input" step="0.1" min="0" value="0">
+                        </label>
+                    </div>
+                    <div class="trim-buttons">
+                        <button class="btn btn-secondary" onclick="closeTrimModal()">Cancel</button>
+                        <button class="btn btn-primary" id="btn-trim" onclick="executeTrim()">
+                            <span class="btn-icon">✂️</span>
+                            <span class="btn-text">Trim Clip</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="app.js"></script>
 </body>
 </html>

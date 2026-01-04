@@ -795,3 +795,159 @@ pub async fn get_native_recording_stats() -> Result<NativeRecordingStats, String
         Err(e) => Err(e),
     }
 }
+
+// ============================================
+// VIDEO TRIMMING COMMANDS
+// ============================================
+
+/// Detailed information about a video clip
+#[derive(serde::Serialize)]
+pub struct VideoClipInfo {
+    pub id: String,
+    pub path: String,
+    pub duration_secs: f32,
+    pub duration_formatted: String,
+    pub width: u32,
+    pub height: u32,
+    pub frame_rate: f32,
+    pub file_size_bytes: u64,
+    pub file_size_formatted: String,
+    pub has_audio: bool,
+    pub codec: String,
+}
+
+/// Gets detailed information about a video clip
+#[tauri::command]
+pub async fn get_clip_details(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<VideoClipInfo, String> {
+    let path = state.clips_directory.join(&id);
+    
+    if !path.exists() {
+        return Err(format!("Clip not found: {}", id));
+    }
+
+    let info = crate::trimmer::get_video_info(&path)?;
+    
+    Ok(VideoClipInfo {
+        id: id.clone(),
+        path: path.to_string_lossy().to_string(),
+        duration_secs: info.duration_secs,
+        duration_formatted: info.duration_formatted(),
+        width: info.width,
+        height: info.height,
+        frame_rate: info.frame_rate,
+        file_size_bytes: info.file_size_bytes,
+        file_size_formatted: info.file_size_formatted(),
+        has_audio: info.has_audio,
+        codec: info.codec_name().to_string(),
+    })
+}
+
+/// Timeline thumbnails response
+#[derive(serde::Serialize)]
+pub struct TimelineThumbnailsResponse {
+    pub thumbnails: Vec<Option<String>>,  // base64 data URLs, None for failed thumbnails
+    pub count: usize,
+}
+
+/// Generates timeline thumbnails for a video clip
+#[tauri::command]
+pub async fn get_timeline_thumbnails(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    count: usize,
+) -> Result<TimelineThumbnailsResponse, String> {
+    let path = state.clips_directory.join(&id);
+    
+    if !path.exists() {
+        return Err(format!("Clip not found: {}", id));
+    }
+
+    // Generate thumbnails at 160px width for timeline
+    let thumbnails = crate::trimmer::generate_thumbnails(&path, count, 160)?;
+    let data_urls = thumbnails.to_data_urls();
+    
+    Ok(TimelineThumbnailsResponse {
+        count: data_urls.len(),
+        thumbnails: data_urls,
+    })
+}
+
+/// Result of a trim operation
+#[derive(serde::Serialize)]
+pub struct TrimClipResult {
+    pub success: bool,
+    pub message: String,
+    pub new_clip_id: Option<String>,
+    pub new_clip_size: Option<String>,
+}
+
+/// Trims a video clip to the specified time range
+#[tauri::command]
+pub async fn trim_clip(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    start_time: f32,
+    end_time: f32,
+) -> Result<TrimClipResult, String> {
+    let input_path = state.clips_directory.join(&id);
+    
+    if !input_path.exists() {
+        return Err(format!("Clip not found: {}", id));
+    }
+
+    // Validate times
+    if start_time < 0.0 {
+        return Err("Start time cannot be negative".to_string());
+    }
+    if end_time <= start_time {
+        return Err("End time must be greater than start time".to_string());
+    }
+    if end_time - start_time < 0.1 {
+        return Err("Minimum clip duration is 0.1 seconds".to_string());
+    }
+
+    // Generate output filename
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let output_name = format!("trimmed_{}.mp4", timestamp);
+    let output_path = state.clips_directory.join(&output_name);
+
+    log::info!(
+        "Trimming clip {} from {:.2}s to {:.2}s -> {}",
+        id, start_time, end_time, output_name
+    );
+
+    let result = crate::trimmer::trim_video(&input_path, &output_path, start_time, end_time);
+    
+    if result.success {
+        let size_formatted = if result.output_size_bytes >= 1024 * 1024 {
+            format!("{:.1} MB", result.output_size_bytes as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{:.1} KB", result.output_size_bytes as f64 / 1024.0)
+        };
+
+        log::info!("Trim completed: {} ({})", output_name, size_formatted);
+
+        Ok(TrimClipResult {
+            success: true,
+            message: format!(
+                "Trimmed {:.1}s clip saved",
+                end_time - start_time
+            ),
+            new_clip_id: Some(output_name),
+            new_clip_size: Some(size_formatted),
+        })
+    } else {
+        let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
+        log::error!("Trim failed: {}", error_msg);
+        
+        Ok(TrimClipResult {
+            success: false,
+            message: error_msg,
+            new_clip_id: None,
+            new_clip_size: None,
+        })
+    }
+}
