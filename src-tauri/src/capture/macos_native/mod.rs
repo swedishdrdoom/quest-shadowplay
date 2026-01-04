@@ -199,9 +199,10 @@ impl ReplayBufferHandle {
                     swift_replay_get_frames_encoded(self.handle),
                     Ordering::Relaxed,
                 );
+                // Swift already returns 0-100, don't multiply again
                 let fill = swift_replay_get_buffer_fill(self.handle);
                 self.stats.buffer_fill_percent.store(
-                    (fill * 100.0) as u32,
+                    fill as u32,
                     Ordering::Relaxed,
                 );
                 self.stats.buffer_memory_bytes.store(
