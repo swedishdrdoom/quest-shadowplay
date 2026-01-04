@@ -120,15 +120,19 @@ impl AppState {
             let entry = entry?;
             let path = entry.path();
 
-            // Check for our clip format
-            if path.extension().map(|e| e == "qsp").unwrap_or(false) {
+            // Check for our clip formats: .qsp (legacy) and .mp4 (new)
+            let is_clip = path.extension()
+                .map(|e| e == "qsp" || e == "mp4")
+                .unwrap_or(false);
+
+            if is_clip {
                 if let Ok(metadata) = entry.metadata() {
                     let filename = path.file_name()
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
 
-                    // Parse timestamp from filename (clip_YYYYMMDD_HHMMSS.qsp)
+                    // Parse timestamp from filename
                     let timestamp = Self::parse_clip_timestamp(&filename);
 
                     clips.push(ClipInfo {
@@ -150,10 +154,20 @@ impl AppState {
 
     /// Parses timestamp from clip filename
     fn parse_clip_timestamp(filename: &str) -> Option<chrono::DateTime<chrono::Local>> {
-        // Format: clip_YYYYMMDD_HHMMSS.qsp
-        if filename.starts_with("clip_") && filename.len() >= 20 {
-            let date_part = &filename[5..13]; // YYYYMMDD
-            let time_part = &filename[14..20]; // HHMMSS
+        // Formats:
+        // - clip_YYYYMMDD_HHMMSS.qsp (legacy)
+        // - replay_YYYYMMDD_HHMMSS.mp4 (new)
+        let prefix_len = if filename.starts_with("clip_") {
+            5
+        } else if filename.starts_with("replay_") {
+            7
+        } else {
+            return None;
+        };
+
+        if filename.len() >= prefix_len + 15 {
+            let date_part = &filename[prefix_len..prefix_len + 8]; // YYYYMMDD
+            let time_part = &filename[prefix_len + 9..prefix_len + 15]; // HHMMSS
 
             if let (Ok(year), Ok(month), Ok(day), Ok(hour), Ok(min), Ok(sec)) = (
                 date_part[0..4].parse::<i32>(),
