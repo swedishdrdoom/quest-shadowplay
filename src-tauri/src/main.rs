@@ -42,6 +42,9 @@ fn main() {
             commands::delete_clip,
             commands::get_clip_thumbnail,
             commands::export_to_mp4,
+            // Clip management
+            commands::open_clip,
+            commands::reveal_clip,
             // New replay buffer commands (H.264 hardware pipeline)
             commands::start_replay_buffer,
             commands::stop_replay_buffer,

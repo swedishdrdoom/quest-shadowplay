@@ -194,7 +194,12 @@ pub async fn get_clip_thumbnail(
         return Ok(None);
     }
 
-    // Try to read the clip and extract first frame
+    // Handle MP4 files - extract thumbnail with ffmpeg
+    if id.ends_with(".mp4") {
+        return extract_mp4_thumbnail(&path);
+    }
+
+    // Handle .qsp files - read first frame
     match quest_shadowplay::encoder::FrameReader::open(path.to_str().unwrap_or("")) {
         Ok(reader) => {
             if let Some(frame) = reader.frames().first() {
@@ -212,6 +217,128 @@ pub async fn get_clip_thumbnail(
     }
 
     Ok(None)
+}
+
+/// Extract thumbnail from MP4 using ffmpeg
+fn extract_mp4_thumbnail(path: &std::path::Path) -> Result<Option<String>, String> {
+    let temp_thumb = std::env::temp_dir().join("quest_shadowplay_thumb.jpg");
+    
+    // Use ffmpeg to extract a frame at 1 second (or first frame if shorter)
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-i", path.to_str().unwrap_or(""),
+            "-ss", "0.5",  // Seek to 0.5 seconds
+            "-vframes", "1",
+            "-vf", "scale=320:-1",  // Scale to 320px width
+            "-q:v", "5",
+            temp_thumb.to_str().unwrap_or(""),
+        ])
+        .output();
+
+    match output {
+        Ok(result) if result.status.success() => {
+            // Read the thumbnail file
+            if let Ok(data) = std::fs::read(&temp_thumb) {
+                let _ = std::fs::remove_file(&temp_thumb);
+                let base64_data = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data
+                );
+                return Ok(Some(format!("data:image/jpeg;base64,{}", base64_data)));
+            }
+        }
+        Ok(result) => {
+            log::warn!("ffmpeg thumbnail failed: {}", String::from_utf8_lossy(&result.stderr));
+        }
+        Err(e) => {
+            log::warn!("ffmpeg not available for thumbnail: {}", e);
+        }
+    }
+    
+    let _ = std::fs::remove_file(&temp_thumb);
+    Ok(None)
+}
+
+/// Opens a clip in the default video player
+#[tauri::command]
+pub async fn open_clip(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<bool, String> {
+    let path = state.clips_directory.join(&id);
+    
+    if !path.exists() {
+        return Err(format!("Clip not found: {}", id));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open: {}", e))?;
+    }
+
+    Ok(true)
+}
+
+/// Reveals a clip in the file manager
+#[tauri::command]
+pub async fn reveal_clip(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<bool, String> {
+    let path = state.clips_directory.join(&id);
+    
+    if !path.exists() {
+        return Err(format!("Clip not found: {}", id));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", path.to_str().unwrap_or("")])
+            .spawn()
+            .map_err(|e| format!("Failed to reveal: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .args(["/select,", path.to_str().unwrap_or("")])
+            .spawn()
+            .map_err(|e| format!("Failed to reveal: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try to open the parent directory
+        if let Some(parent) = path.parent() {
+            std::process::Command::new("xdg-open")
+                .arg(parent)
+                .spawn()
+                .map_err(|e| format!("Failed to reveal: {}", e))?;
+        }
+    }
+
+    Ok(true)
 }
 
 /// Result of MP4 export

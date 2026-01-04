@@ -151,10 +151,8 @@ async function loadClips() {
             const card = createClipCard(clip);
             grid.appendChild(card);
             
-            // Load thumbnail (only for .qsp files)
-            if (clip.id.endsWith('.qsp')) {
-                loadThumbnail(clip.id, card);
-            }
+            // Load thumbnail for all clip types
+            loadThumbnail(clip.id, card);
         }
         
     } catch (error) {
@@ -178,7 +176,7 @@ function createClipCard(clip) {
     const icon = isMP4 ? '🎬' : '📹';
     
     card.innerHTML = `
-        <div class="clip-thumbnail" data-clip-id="${clip.id}">
+        <div class="clip-thumbnail" data-clip-id="${clip.id}" onclick="openClip('${clip.id}')">
             ${icon}
         </div>
         <div class="clip-info">
@@ -186,9 +184,18 @@ function createClipCard(clip) {
             <div class="clip-size">${sizeDisplay}</div>
         </div>
         <div class="clip-actions">
-            ${isMP4 ? '' : `<button class="clip-action-btn export" onclick="exportToMp4('${clip.id}', event)">
-                🎬 MP4
-            </button>`}
+            ${isMP4 ? `
+                <button class="clip-action-btn open" onclick="openClip('${clip.id}', event)">
+                    ▶️ Play
+                </button>
+                <button class="clip-action-btn reveal" onclick="revealClip('${clip.id}', event)">
+                    📁 Reveal
+                </button>
+            ` : `
+                <button class="clip-action-btn export" onclick="exportToMp4('${clip.id}', event)">
+                    🎬 MP4
+                </button>
+            `}
             <button class="clip-action-btn delete" onclick="deleteClip('${clip.id}', event)">
                 🗑️ Delete
             </button>
@@ -293,6 +300,34 @@ async function deleteClip(clipId, event) {
     } catch (error) {
         console.error('Delete failed:', error);
         showToast(`Delete failed: ${error}`, 'error');
+    }
+}
+
+/**
+ * Opens a clip in the default video player
+ */
+async function openClip(clipId, event) {
+    if (event) event.stopPropagation();
+    
+    try {
+        await invoke('open_clip', { id: clipId });
+    } catch (error) {
+        console.error('Open failed:', error);
+        showToast(`Failed to open clip: ${error}`, 'error');
+    }
+}
+
+/**
+ * Reveals a clip in the file manager
+ */
+async function revealClip(clipId, event) {
+    if (event) event.stopPropagation();
+    
+    try {
+        await invoke('reveal_clip', { id: clipId });
+    } catch (error) {
+        console.error('Reveal failed:', error);
+        showToast(`Failed to reveal clip: ${error}`, 'error');
     }
 }
 
