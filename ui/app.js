@@ -694,9 +694,24 @@ async function openTrimModal(clipId) {
         document.getElementById('trim-size').textContent = clipInfo.file_size_formatted;
         document.getElementById('trim-total-time').textContent = formatTime(clipInfo.duration_secs);
         
-        // Set up video source
-        video.src = convertFileSrc(clipInfo.path);
-        video.currentTime = 0;
+        // Load video through Tauri command (converts to data URL)
+        console.log('Loading video file:', clipInfo.id);
+        try {
+            const videoDataUrl = await invoke('read_video_file', { id: clipInfo.id });
+            console.log('Video loaded, data URL length:', videoDataUrl.length);
+            video.src = videoDataUrl;
+            video.currentTime = 0;
+        } catch (err) {
+            console.error('Failed to load video:', err);
+            showToast(`Failed to load video: ${err}`, 'error');
+            return;
+        }
+        
+        // Add error handler for debugging
+        video.onerror = (e) => {
+            console.error('Video error:', video.error);
+            showToast(`Video load error: ${video.error?.message || 'Unknown error'}`, 'error');
+        };
         
         // Set up inputs
         document.getElementById('trim-start-input').value = 0;
@@ -739,8 +754,13 @@ async function openTrimModal(clipId) {
  * Converts a file path to a Tauri asset URL
  */
 function convertFileSrc(path) {
-    if (window.__TAURI__ && window.__TAURI__.core.convertFileSrc) {
-        return window.__TAURI__.core.convertFileSrc(path);
+    if (window.__TAURI__) {
+        // Tauri v2 asset protocol - use https://asset.localhost/ prefix
+        // Path must start with / for absolute paths
+        const normalizedPath = path.startsWith('/') ? path : '/' + path;
+        const assetUrl = `https://asset.localhost${normalizedPath}`;
+        console.log('Asset URL:', assetUrl);
+        return assetUrl;
     }
     // Fallback for development
     return 'file://' + path;

@@ -346,6 +346,42 @@ pub async fn reveal_clip(
     Ok(true)
 }
 
+/// Reads a video file and returns it as base64 for playback
+/// This is used for video preview in the trim UI since asset protocol may not work
+#[tauri::command]
+pub async fn read_video_file(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<String, String> {
+    let path = state.clips_directory.join(&id);
+    
+    if !path.exists() {
+        return Err(format!("Video not found: {}", id));
+    }
+    
+    // Check file size - warn if very large
+    let metadata = std::fs::metadata(&path)
+        .map_err(|e| format!("Failed to read file metadata: {}", e))?;
+    
+    let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+    if size_mb > 100.0 {
+        log::warn!("Large video file ({:.1} MB) - this may be slow", size_mb);
+    }
+    
+    // Read the file
+    let data = std::fs::read(&path)
+        .map_err(|e| format!("Failed to read video file: {}", e))?;
+    
+    // Encode as base64
+    let base64_data = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        &data
+    );
+    
+    // Return as data URL
+    Ok(format!("data:video/mp4;base64,{}", base64_data))
+}
+
 /// Result of MP4 export
 #[derive(serde::Serialize)]
 pub struct ExportResult {

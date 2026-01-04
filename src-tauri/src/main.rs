@@ -47,6 +47,7 @@ fn main() {
             // Clip management
             commands::open_clip,
             commands::reveal_clip,
+            commands::read_video_file,
             // New replay buffer commands (H.264 hardware pipeline)
             commands::start_replay_buffer,
             commands::stop_replay_buffer,
