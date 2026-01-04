@@ -2,16 +2,17 @@
  * Quest Shadowplay - Frontend Application
  * 
  * Connects the UI to the Tauri Rust backend.
+ * Uses the new replay buffer pipeline for hardware-accelerated capture.
  */
 
 // ============================================
 // STATE
 // ============================================
 
-let isRecording = false;
-let isNativeRecording = false;
+let isLegacyRecording = false;  // Legacy JPEG pipeline
+let isReplayBufferActive = false;  // New H.264 replay buffer
 let statusInterval = null;
-let nativeStatsInterval = null;
+let replayStatsInterval = null;
 
 // ============================================
 // TAURI BRIDGE
@@ -37,20 +38,29 @@ function mockCommand(cmd, args) {
     switch (cmd) {
         case 'get_status':
             return {
-                is_recording: isRecording,
-                buffer_fill_percent: isRecording ? Math.random() * 100 : 0,
-                frame_count: isRecording ? Math.floor(Math.random() * 900) : 0,
+                is_recording: isLegacyRecording,
+                buffer_fill_percent: isLegacyRecording ? Math.random() * 100 : 0,
+                frame_count: isLegacyRecording ? Math.floor(Math.random() * 900) : 0,
                 buffer_capacity: 900,
                 clips_count: 0
             };
-        case 'start_recording':
-            isRecording = true;
-            return true;
-        case 'stop_recording':
-            isRecording = false;
-            return true;
-        case 'save_clip':
-            return { success: true, message: 'Mock saved!', clip_id: 'mock_clip.qsp' };
+        case 'get_replay_stats':
+            return {
+                is_active: isReplayBufferActive,
+                frames_captured: isReplayBufferActive ? 1800 : 0,
+                frames_dropped: 0,
+                frames_encoded: isReplayBufferActive ? 1800 : 0,
+                buffer_fill_percent: isReplayBufferActive ? 85.0 : 0,
+                buffer_memory_mb: isReplayBufferActive ? 8.5 : 0,
+            };
+        case 'start_replay_buffer':
+            isReplayBufferActive = true;
+            return { success: true, message: 'Replay buffer started' };
+        case 'stop_replay_buffer':
+            isReplayBufferActive = false;
+            return { success: true, message: 'Replay buffer stopped' };
+        case 'save_replay':
+            return { success: true, message: 'Replay saved!', clip_path: '/tmp/replay.mp4' };
         case 'list_clips':
             return [];
         case 'delete_clip':
@@ -65,9 +75,9 @@ function mockCommand(cmd, args) {
 // ============================================
 
 /**
- * Updates the status display
+ * Updates the legacy status display
  */
-async function updateStatus() {
+async function updateLegacyStatus() {
     try {
         const status = await invoke('get_status');
         
@@ -80,8 +90,8 @@ async function updateStatus() {
         document.getElementById('frame-capacity').textContent = status.buffer_capacity;
         
         // Update recording state
-        isRecording = status.is_recording;
-        updateRecordingUI();
+        isLegacyRecording = status.is_recording;
+        updateLegacyRecordingUI();
         
         // Update save button
         document.getElementById('btn-save').disabled = status.frame_count === 0;
@@ -96,13 +106,13 @@ async function updateStatus() {
 }
 
 /**
- * Updates the UI to reflect recording state
+ * Updates the UI to reflect legacy recording state
  */
-function updateRecordingUI() {
+function updateLegacyRecordingUI() {
     const badge = document.getElementById('status-badge');
     const btn = document.getElementById('btn-record');
     
-    if (isRecording) {
+    if (isLegacyRecording) {
         badge.classList.add('recording');
         badge.querySelector('.status-text').textContent = 'Recording';
         btn.classList.add('recording');
@@ -141,8 +151,10 @@ async function loadClips() {
             const card = createClipCard(clip);
             grid.appendChild(card);
             
-            // Load thumbnail
-            loadThumbnail(clip.id, card);
+            // Load thumbnail (only for .qsp files)
+            if (clip.id.endsWith('.qsp')) {
+                loadThumbnail(clip.id, card);
+            }
         }
         
     } catch (error) {
@@ -162,18 +174,21 @@ function createClipCard(clip) {
     const sizeMB = (clip.size_bytes / (1024 * 1024)).toFixed(1);
     const sizeDisplay = clip.size_bytes > 1024 * 1024 ? `${sizeMB} MB` : `${sizeKB} KB`;
     
+    const isMP4 = clip.id.endsWith('.mp4');
+    const icon = isMP4 ? '🎬' : '📹';
+    
     card.innerHTML = `
         <div class="clip-thumbnail" data-clip-id="${clip.id}">
-            📹
+            ${icon}
         </div>
         <div class="clip-info">
             <div class="clip-time">${clip.timestamp || 'Unknown time'}</div>
             <div class="clip-size">${sizeDisplay}</div>
         </div>
         <div class="clip-actions">
-            <button class="clip-action-btn export" onclick="exportToMp4('${clip.id}', event)">
+            ${isMP4 ? '' : `<button class="clip-action-btn export" onclick="exportToMp4('${clip.id}', event)">
                 🎬 MP4
-            </button>
+            </button>`}
             <button class="clip-action-btn delete" onclick="deleteClip('${clip.id}', event)">
                 🗑️ Delete
             </button>
@@ -200,18 +215,18 @@ async function loadThumbnail(clipId, card) {
 }
 
 // ============================================
-// ACTIONS
+// LEGACY ACTIONS (JPEG pipeline)
 // ============================================
 
 /**
- * Toggles recording on/off
+ * Toggles legacy recording on/off
  */
 async function toggleRecording() {
     const btn = document.getElementById('btn-record');
     btn.disabled = true;
     
     try {
-        if (isRecording) {
+        if (isLegacyRecording) {
             await invoke('stop_recording');
             showToast('Recording stopped', 'info');
         } else {
@@ -223,7 +238,7 @@ async function toggleRecording() {
             }
         }
         
-        await updateStatus();
+        await updateLegacyStatus();
         
     } catch (error) {
         console.error('Toggle recording failed:', error);
@@ -234,7 +249,7 @@ async function toggleRecording() {
 }
 
 /**
- * Saves the current buffer as a clip
+ * Saves the current buffer as a clip (legacy)
  */
 async function saveClip() {
     const btn = document.getElementById('btn-save');
@@ -274,111 +289,15 @@ async function deleteClip(clipId, event) {
         await invoke('delete_clip', { id: clipId });
         showToast('Clip deleted', 'info');
         await loadClips();
-        await updateStatus();
+        await updateLegacyStatus();
     } catch (error) {
         console.error('Delete failed:', error);
         showToast(`Delete failed: ${error}`, 'error');
     }
 }
 
-// ============================================
-// NATIVE RECORDING (Hardware Accelerated)
-// ============================================
-
 /**
- * Toggles native recording on/off
- */
-async function toggleNativeRecording() {
-    const btn = document.getElementById('btn-native-record');
-    btn.disabled = true;
-    
-    try {
-        if (isNativeRecording) {
-            const result = await invoke('stop_native_recording');
-            if (result.success) {
-                showToast(result.message, 'success');
-                isNativeRecording = false;
-                stopNativeStatsPolling();
-                await loadClips(); // Reload to show new MP4
-            } else {
-                showToast(result.message, 'error');
-            }
-        } else {
-            const result = await invoke('start_native_recording');
-            if (result.success) {
-                showToast(result.message, 'success');
-                isNativeRecording = true;
-                startNativeStatsPolling();
-                if (result.output_path) {
-                    console.log('Recording to:', result.output_path);
-                }
-            } else {
-                showToast(result.message, 'error');
-            }
-        }
-        updateNativeRecordingUI();
-    } catch (error) {
-        console.error('Native recording toggle failed:', error);
-        showToast(`Error: ${error}`, 'error');
-    } finally {
-        btn.disabled = false;
-    }
-}
-
-/**
- * Updates the native recording UI
- */
-function updateNativeRecordingUI() {
-    const btn = document.getElementById('btn-native-record');
-    
-    if (isNativeRecording) {
-        btn.classList.add('recording');
-        btn.querySelector('.btn-icon').textContent = '⏹';
-        btn.querySelector('.btn-text').textContent = 'Stop Native Recording';
-    } else {
-        btn.classList.remove('recording');
-        btn.querySelector('.btn-icon').textContent = '⏺';
-        btn.querySelector('.btn-text').textContent = 'Start Native Recording';
-    }
-}
-
-/**
- * Updates native recording stats
- */
-async function updateNativeStats() {
-    try {
-        const stats = await invoke('get_native_recording_stats');
-        document.getElementById('native-frames').textContent = stats.frames_captured;
-        document.getElementById('native-dropped').textContent = stats.frames_dropped;
-        document.getElementById('native-encoded').textContent = stats.frames_encoded;
-        
-        isNativeRecording = stats.is_recording;
-        updateNativeRecordingUI();
-    } catch (error) {
-        console.error('Failed to get native stats:', error);
-    }
-}
-
-/**
- * Starts polling for native stats
- */
-function startNativeStatsPolling() {
-    if (nativeStatsInterval) return;
-    nativeStatsInterval = setInterval(updateNativeStats, 200); // 5Hz updates
-}
-
-/**
- * Stops polling for native stats
- */
-function stopNativeStatsPolling() {
-    if (nativeStatsInterval) {
-        clearInterval(nativeStatsInterval);
-        nativeStatsInterval = null;
-    }
-}
-
-/**
- * Exports a clip to MP4
+ * Exports a clip to MP4 (legacy)
  */
 async function exportToMp4(clipId, event) {
     event.stopPropagation();
@@ -394,15 +313,7 @@ async function exportToMp4(clipId, event) {
         
         if (result.success) {
             showToast(`Exported! ${result.message}`, 'success');
-            if (result.mp4_path) {
-                console.log('MP4 saved to:', result.mp4_path);
-                // Try to open the folder containing the MP4
-                try {
-                    await invoke('open_folder', { path: result.mp4_path });
-                } catch (e) {
-                    // Ignore if open_folder not available
-                }
-            }
+            await loadClips();
         } else {
             showToast(`Export failed: ${result.message}`, 'error');
         }
@@ -413,6 +324,159 @@ async function exportToMp4(clipId, event) {
         btn.disabled = false;
         btn.textContent = originalText;
     }
+}
+
+// ============================================
+// REPLAY BUFFER (New H.264 Pipeline)
+// ============================================
+
+/**
+ * Toggles replay buffer on/off
+ */
+async function toggleReplayBuffer() {
+    const btn = document.getElementById('btn-replay-toggle');
+    btn.disabled = true;
+    
+    try {
+        if (isReplayBufferActive) {
+            const result = await invoke('stop_replay_buffer');
+            if (result.success) {
+                showToast(result.message, 'success');
+                isReplayBufferActive = false;
+                stopReplayStatsPolling();
+            } else {
+                showToast(result.message, 'error');
+            }
+        } else {
+            const result = await invoke('start_replay_buffer');
+            if (result.success) {
+                showToast(result.message, 'success');
+                isReplayBufferActive = true;
+                startReplayStatsPolling();
+            } else {
+                showToast(result.message, 'error');
+            }
+        }
+        updateReplayBufferUI();
+    } catch (error) {
+        console.error('Replay buffer toggle failed:', error);
+        showToast(`Error: ${error}`, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+/**
+ * Saves the current replay buffer to MP4
+ */
+async function saveReplay() {
+    const btn = document.getElementById('btn-replay-save');
+    btn.disabled = true;
+    const originalText = btn.querySelector('.btn-text').textContent;
+    btn.querySelector('.btn-text').textContent = 'Saving...';
+    
+    try {
+        const result = await invoke('save_replay');
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            if (result.clip_path) {
+                console.log('Replay saved to:', result.clip_path);
+            }
+            await loadClips();
+        } else {
+            showToast(result.message, 'error');
+        }
+    } catch (error) {
+        console.error('Save replay failed:', error);
+        showToast(`Save failed: ${error}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.querySelector('.btn-text').textContent = originalText;
+    }
+}
+
+/**
+ * Updates the replay buffer UI
+ */
+function updateReplayBufferUI() {
+    const btn = document.getElementById('btn-replay-toggle');
+    const saveBtn = document.getElementById('btn-replay-save');
+    const indicator = document.getElementById('replay-indicator');
+    
+    if (isReplayBufferActive) {
+        btn.classList.add('recording');
+        btn.querySelector('.btn-icon').textContent = '⏹';
+        btn.querySelector('.btn-text').textContent = 'Stop Replay Buffer';
+        saveBtn.disabled = false;
+        indicator.classList.add('active');
+        indicator.querySelector('.status-text').textContent = 'Buffering';
+    } else {
+        btn.classList.remove('recording');
+        btn.querySelector('.btn-icon').textContent = '⏺';
+        btn.querySelector('.btn-text').textContent = 'Start Replay Buffer';
+        saveBtn.disabled = true;
+        indicator.classList.remove('active');
+        indicator.querySelector('.status-text').textContent = 'Inactive';
+    }
+}
+
+/**
+ * Updates replay buffer stats display
+ */
+async function updateReplayStats() {
+    try {
+        const stats = await invoke('get_replay_stats');
+        
+        document.getElementById('replay-fill').style.width = `${stats.buffer_fill_percent}%`;
+        document.getElementById('replay-fill-percent').textContent = `${stats.buffer_fill_percent.toFixed(1)}%`;
+        document.getElementById('replay-frames').textContent = stats.frames_encoded;
+        document.getElementById('replay-dropped').textContent = stats.frames_dropped;
+        document.getElementById('replay-memory').textContent = `${stats.buffer_memory_mb.toFixed(1)} MB`;
+        
+        isReplayBufferActive = stats.is_active;
+        updateReplayBufferUI();
+    } catch (error) {
+        console.error('Failed to get replay stats:', error);
+    }
+}
+
+/**
+ * Starts polling for replay stats
+ */
+function startReplayStatsPolling() {
+    if (replayStatsInterval) return;
+    replayStatsInterval = setInterval(updateReplayStats, 200); // 5Hz updates
+}
+
+/**
+ * Stops polling for replay stats
+ */
+function stopReplayStatsPolling() {
+    if (replayStatsInterval) {
+        clearInterval(replayStatsInterval);
+        replayStatsInterval = null;
+    }
+}
+
+// ============================================
+// LEGACY NATIVE RECORDING (redirects to replay buffer)
+// ============================================
+
+async function toggleNativeRecording() {
+    return toggleReplayBuffer();
+}
+
+async function updateNativeStats() {
+    return updateReplayStats();
+}
+
+function startNativeStatsPolling() {
+    return startReplayStatsPolling();
+}
+
+function stopNativeStatsPolling() {
+    return stopReplayStatsPolling();
 }
 
 // ============================================
@@ -450,15 +514,14 @@ async function init() {
     console.log('Initializing Quest Shadowplay UI...');
     
     // Initial status update
-    await updateStatus();
+    await updateLegacyStatus();
+    await updateReplayStats();
     
     // Load clips
     await loadClips();
     
-    // Start status polling (every 500ms when recording, 2s otherwise)
-    statusInterval = setInterval(async () => {
-        await updateStatus();
-    }, isRecording ? 500 : 2000);
+    // Start status polling
+    statusInterval = setInterval(updateLegacyStatus, 2000);
     
     console.log('UI initialized');
 }
@@ -469,4 +532,3 @@ if (document.readyState === 'loading') {
 } else {
     init();
 }
-

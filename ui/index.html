@@ -19,52 +19,77 @@
 
         <!-- Main Content -->
         <main class="main">
-            <!-- Recording Controls -->
-            <section class="control-panel">
-                <div class="buffer-display">
+            <!-- Replay Buffer (New H.264 Pipeline) -->
+            <section class="control-panel replay-panel">
+                <div class="replay-header">
+                    <h3>🔴 Replay Buffer</h3>
+                    <div class="replay-indicator" id="replay-indicator">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Inactive</span>
+                    </div>
+                </div>
+                
+                <div class="replay-buffer-display">
                     <div class="buffer-label">
-                        <span>Buffer</span>
-                        <span id="buffer-percent">0%</span>
+                        <span>Buffer (10 seconds)</span>
+                        <span id="replay-fill-percent">0%</span>
                     </div>
-                    <div class="buffer-bar">
-                        <div class="buffer-fill" id="buffer-fill"></div>
+                    <div class="buffer-bar replay-bar">
+                        <div class="buffer-fill replay-fill" id="replay-fill"></div>
                     </div>
-                    <div class="buffer-info">
-                        <span id="frame-count">0</span> / <span id="frame-capacity">900</span> frames
+                    <div class="replay-stats">
+                        <span>Frames: <strong id="replay-frames">0</strong></span>
+                        <span>Dropped: <strong id="replay-dropped">0</strong></span>
+                        <span>Memory: <strong id="replay-memory">0 MB</strong></span>
                     </div>
                 </div>
 
                 <div class="control-buttons">
-                    <button class="btn btn-primary" id="btn-record" onclick="toggleRecording()">
-                        <span class="btn-icon">▶</span>
-                        <span class="btn-text">Start Recording</span>
-                    </button>
-                    <button class="btn btn-secondary" id="btn-save" onclick="saveClip()" disabled>
-                        <span class="btn-icon">💾</span>
-                        <span class="btn-text">Save Clip</span>
-                    </button>
-                </div>
-            </section>
-
-            <!-- Native Recording (macOS Hardware Accelerated) -->
-            <section class="control-panel native-panel">
-                <div class="native-header">
-                    <h3>🎬 Native Recording (1080p 60fps)</h3>
-                    <span class="native-badge">Hardware Accelerated</span>
-                </div>
-                <div class="native-stats" id="native-stats">
-                    <span>Frames: <strong id="native-frames">0</strong></span>
-                    <span>Dropped: <strong id="native-dropped">0</strong></span>
-                    <span>Encoded: <strong id="native-encoded">0</strong></span>
-                </div>
-                <div class="control-buttons">
-                    <button class="btn btn-native" id="btn-native-record" onclick="toggleNativeRecording()">
+                    <button class="btn btn-replay" id="btn-replay-toggle" onclick="toggleReplayBuffer()">
                         <span class="btn-icon">⏺</span>
-                        <span class="btn-text">Start Native Recording</span>
+                        <span class="btn-text">Start Replay Buffer</span>
+                    </button>
+                    <button class="btn btn-save-replay" id="btn-replay-save" onclick="saveReplay()" disabled>
+                        <span class="btn-icon">💾</span>
+                        <span class="btn-text">Save Last 10s</span>
                     </button>
                 </div>
-                <p class="native-hint">Records directly to MP4 using ScreenCaptureKit + VideoToolbox</p>
+                
+                <p class="replay-hint">
+                    Hardware H.264 encoding at 1080p 60fps • ~10MB buffer
+                </p>
             </section>
+
+            <!-- Legacy Recording (JPEG pipeline - for comparison/fallback) -->
+            <details class="legacy-section">
+                <summary>Legacy Recording (JPEG Pipeline)</summary>
+                <section class="control-panel">
+                    <div class="buffer-display">
+                        <div class="buffer-label">
+                            <span>Buffer</span>
+                            <span id="buffer-percent">0%</span>
+                        </div>
+                        <div class="buffer-bar">
+                            <div class="buffer-fill" id="buffer-fill"></div>
+                        </div>
+                        <div class="buffer-info">
+                            <span id="frame-count">0</span> / <span id="frame-capacity">900</span> frames
+                        </div>
+                    </div>
+
+                    <div class="control-buttons">
+                        <button class="btn btn-primary" id="btn-record" onclick="toggleRecording()">
+                            <span class="btn-icon">▶</span>
+                            <span class="btn-text">Start Recording</span>
+                        </button>
+                        <button class="btn btn-secondary" id="btn-save" onclick="saveClip()" disabled>
+                            <span class="btn-icon">💾</span>
+                            <span class="btn-text">Save Clip</span>
+                        </button>
+                    </div>
+                    <p class="legacy-hint">Uses JPEG compression, requires ffmpeg for MP4 export</p>
+                </section>
+            </details>
 
             <!-- Saved Clips Grid -->
             <section class="clips-section">
@@ -77,7 +102,7 @@
                     <div class="empty-state" id="empty-state">
                         <span class="empty-icon">📹</span>
                         <p>No clips saved yet</p>
-                        <p class="empty-hint">Start recording and save your first clip!</p>
+                        <p class="empty-hint">Start the replay buffer and save your first clip!</p>
                     </div>
                 </div>
             </section>
@@ -85,7 +110,7 @@
 
         <!-- Footer -->
         <footer class="footer">
-            <p>Quest Shadowplay v0.1.0 • VR Replay Buffer</p>
+            <p>Quest Shadowplay v0.2.0 • H.264 Replay Buffer</p>
         </footer>
     </div>
 
@@ -95,4 +120,3 @@
     <script src="app.js"></script>
 </body>
 </html>
-

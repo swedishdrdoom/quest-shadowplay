@@ -22,6 +22,9 @@
     --recording: #ef4444;
     --recording-glow: rgba(239, 68, 68, 0.4);
     
+    --replay-color: #f97316;
+    --replay-glow: rgba(249, 115, 22, 0.4);
+    
     /* Spacing */
     --spacing-xs: 4px;
     --spacing-sm: 8px;
@@ -101,10 +104,10 @@ body {
 .status-badge.recording .status-dot {
     background: var(--recording);
     box-shadow: 0 0 12px var(--recording-glow);
-    animation: pulse 1.5s ease-in-out infinite;
+    animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
-@keyframes pulse {
+@keyframes pulse-dot {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
 }
@@ -128,7 +131,8 @@ body {
 }
 
 /* Buffer Display */
-.buffer-display {
+.buffer-display,
+.replay-buffer-display {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
@@ -141,9 +145,14 @@ body {
     color: var(--text-secondary);
 }
 
-#buffer-percent {
+#buffer-percent,
+#replay-fill-percent {
     font-weight: 600;
     color: var(--accent-primary);
+}
+
+#replay-fill-percent {
+    color: var(--replay-color);
 }
 
 .buffer-bar {
@@ -159,6 +168,14 @@ body {
     background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
     border-radius: var(--radius-sm);
     transition: width var(--transition-normal);
+}
+
+.replay-bar {
+    height: 16px;
+}
+
+.replay-fill {
+    background: linear-gradient(90deg, var(--replay-color), #fb923c);
 }
 
 .buffer-info {
@@ -223,6 +240,119 @@ body {
 
 .btn-icon {
     font-size: 1.25rem;
+}
+
+/* Replay Buffer Panel */
+.replay-panel {
+    border: 2px solid var(--replay-color);
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.1), transparent);
+}
+
+.replay-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.replay-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.replay-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-md);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-lg);
+    font-size: 0.75rem;
+}
+
+.replay-indicator.active .status-dot {
+    background: var(--replay-color);
+    box-shadow: 0 0 12px var(--replay-glow);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.replay-stats {
+    display: flex;
+    gap: var(--spacing-lg);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.replay-stats strong {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.replay-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.btn-replay {
+    background: linear-gradient(135deg, var(--replay-color), #ea580c);
+    color: white;
+}
+
+.btn-replay:hover:not(:disabled) {
+    background: linear-gradient(135deg, #fb923c, var(--replay-color));
+    box-shadow: 0 4px 20px var(--replay-glow);
+}
+
+.btn-replay.recording {
+    background: linear-gradient(135deg, var(--recording), #dc2626);
+    animation: pulse-btn 1.5s ease-in-out infinite;
+}
+
+.btn-save-replay {
+    background: linear-gradient(135deg, var(--success), #16a34a);
+    color: white;
+}
+
+.btn-save-replay:hover:not(:disabled) {
+    background: linear-gradient(135deg, #4ade80, var(--success));
+    box-shadow: 0 4px 20px rgba(34, 197, 94, 0.4);
+}
+
+@keyframes pulse-btn {
+    0%, 100% { box-shadow: 0 0 0 0 var(--recording-glow); }
+    50% { box-shadow: 0 0 20px 5px var(--recording-glow); }
+}
+
+/* Legacy Section */
+.legacy-section {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.legacy-section summary {
+    padding: var(--spacing-md) var(--spacing-lg);
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    user-select: none;
+}
+
+.legacy-section summary:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+.legacy-section .control-panel {
+    border-radius: 0;
+}
+
+.legacy-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-align: center;
 }
 
 /* Clips Section */
@@ -351,7 +481,7 @@ body {
 }
 
 .clip-action-btn.export:hover {
-    color: var(--accent);
+    color: var(--accent-primary);
 }
 
 /* Footer */
@@ -407,75 +537,6 @@ body {
     }
 }
 
-/* Native Recording Panel */
-.native-panel {
-    border: 1px solid var(--accent-primary);
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), transparent);
-}
-
-.native-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: var(--spacing-md);
-}
-
-.native-header h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0;
-}
-
-.native-badge {
-    font-size: 0.7rem;
-    padding: 2px 8px;
-    background: var(--accent-primary);
-    color: white;
-    border-radius: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.native-stats {
-    display: flex;
-    gap: var(--spacing-lg);
-    margin-bottom: var(--spacing-md);
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-}
-
-.native-stats strong {
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-}
-
-.native-hint {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-top: var(--spacing-sm);
-    text-align: center;
-}
-
-.btn-native {
-    background: linear-gradient(135deg, var(--accent-primary), #4f46e5);
-    color: white;
-}
-
-.btn-native:hover:not(:disabled) {
-    background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
-    box-shadow: 0 4px 20px var(--accent-glow);
-}
-
-.btn-native.recording {
-    background: linear-gradient(135deg, var(--recording), #dc2626);
-    animation: pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 var(--recording-glow); }
-    50% { box-shadow: 0 0 20px 5px var(--recording-glow); }
-}
-
 /* Responsive */
 @media (max-width: 600px) {
     .control-buttons {
@@ -486,9 +547,8 @@ body {
         grid-template-columns: repeat(2, 1fr);
     }
     
-    .native-stats {
+    .replay-stats {
         flex-wrap: wrap;
         gap: var(--spacing-sm);
     }
 }
-

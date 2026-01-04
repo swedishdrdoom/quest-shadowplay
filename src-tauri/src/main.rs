@@ -33,6 +33,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Legacy commands (JPEG ring buffer pipeline)
             commands::start_recording,
             commands::stop_recording,
             commands::save_clip,
@@ -41,7 +42,12 @@ fn main() {
             commands::delete_clip,
             commands::get_clip_thumbnail,
             commands::export_to_mp4,
-            // Native hardware-accelerated recording (macOS)
+            // New replay buffer commands (H.264 hardware pipeline)
+            commands::start_replay_buffer,
+            commands::stop_replay_buffer,
+            commands::save_replay,
+            commands::get_replay_stats,
+            // Legacy native recording commands (redirect to replay buffer)
             commands::start_native_recording,
             commands::stop_native_recording,
             commands::get_native_recording_stats,
@@ -49,4 +55,3 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

@@ -11,7 +11,7 @@ use quest_shadowplay::encoder::VideoEncoder;
 use quest_shadowplay::storage::StorageManager;
 
 #[cfg(target_os = "macos")]
-use crate::capture::macos_native::{CaptureConfig, NativeCaptureHandle};
+use crate::capture::macos_native::{ReplayConfig, ReplayBufferHandle};
 #[cfg(target_os = "macos")]
 use std::sync::Mutex as StdMutex;
 
@@ -34,10 +34,10 @@ pub struct SaveResult {
 }
 
 // ============================================
-// RECORDING COMMANDS
+// LEGACY RECORDING COMMANDS (uses old pipeline)
 // ============================================
 
-/// Starts the recording/capture process
+/// Starts the recording/capture process (legacy - uses JPEG ring buffer)
 #[tauri::command]
 pub async fn start_recording(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
     if state.is_recording() {
@@ -67,7 +67,7 @@ pub async fn start_recording(state: State<'_, Arc<AppState>>) -> Result<bool, St
     Ok(true)
 }
 
-/// Stops the recording/capture process
+/// Stops the recording/capture process (legacy)
 #[tauri::command]
 pub async fn stop_recording(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
     if !state.is_recording() {
@@ -92,7 +92,7 @@ pub async fn stop_recording(state: State<'_, Arc<AppState>>) -> Result<bool, Str
 // CLIP MANAGEMENT COMMANDS
 // ============================================
 
-/// Saves the current buffer as a clip
+/// Saves the current buffer as a clip (legacy - uses JPEG format)
 #[tauri::command]
 pub async fn save_clip(state: State<'_, Arc<AppState>>) -> Result<SaveResult, String> {
     log::info!("Saving clip...");
@@ -222,7 +222,7 @@ pub struct ExportResult {
     pub mp4_path: Option<String>,
 }
 
-/// Exports a clip to MP4 using ffmpeg
+/// Exports a clip to MP4 using ffmpeg (legacy - for .qsp files)
 #[tauri::command]
 pub async fn export_to_mp4(
     state: State<'_, Arc<AppState>>,
@@ -361,10 +361,250 @@ pub async fn export_to_mp4(
 }
 
 // ============================================
-// NATIVE RECORDING COMMANDS (macOS only)
+// REPLAY BUFFER COMMANDS (new unified pipeline)
 // ============================================
 
-/// Result of native recording operations
+/// Result of replay buffer operations
+#[derive(serde::Serialize)]
+pub struct ReplayResult {
+    pub success: bool,
+    pub message: String,
+    pub clip_path: Option<String>,
+}
+
+/// Statistics from replay buffer
+#[derive(serde::Serialize)]
+pub struct ReplayStats {
+    pub is_active: bool,
+    pub frames_captured: u64,
+    pub frames_dropped: u64,
+    pub frames_encoded: u64,
+    pub buffer_fill_percent: f32,
+    pub buffer_memory_mb: f32,
+}
+
+// Global handle for replay buffer (macOS only)
+#[cfg(target_os = "macos")]
+static REPLAY_BUFFER: std::sync::OnceLock<StdMutex<Option<ReplayBufferHandle>>> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn get_replay_buffer() -> &'static StdMutex<Option<ReplayBufferHandle>> {
+    REPLAY_BUFFER.get_or_init(|| StdMutex::new(None))
+}
+
+/// Starts the replay buffer (captures to memory, not file)
+/// Call save_replay to save the buffer contents to an MP4
+#[tauri::command]
+pub async fn start_replay_buffer(
+    _state: State<'_, Arc<AppState>>,
+) -> Result<ReplayResult, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut buffer_guard = get_replay_buffer().lock().unwrap();
+        
+        if buffer_guard.is_some() {
+            return Ok(ReplayResult {
+                success: false,
+                message: "Replay buffer already active".to_string(),
+                clip_path: None,
+            });
+        }
+
+        // Create replay buffer with default config (1080p60, 10s buffer)
+        let config = ReplayConfig::default();
+        
+        match ReplayBufferHandle::new(config) {
+            Ok(handle) => {
+                match handle.start() {
+                    Ok(()) => {
+                        *buffer_guard = Some(handle);
+                        log::info!("Replay buffer started");
+                        Ok(ReplayResult {
+                            success: true,
+                            message: "Replay buffer active (1080p @ 60fps, 10s buffer)".to_string(),
+                            clip_path: None,
+                        })
+                    }
+                    Err(e) => {
+                        Ok(ReplayResult {
+                            success: false,
+                            message: format!("Failed to start: {}", e),
+                            clip_path: None,
+                        })
+                    }
+                }
+            }
+            Err(e) => {
+                Ok(ReplayResult {
+                    success: false,
+                    message: format!("Failed to create replay buffer: {}", e),
+                    clip_path: None,
+                })
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(ReplayResult {
+            success: false,
+            message: "Replay buffer only available on macOS".to_string(),
+            clip_path: None,
+        })
+    }
+}
+
+/// Stops the replay buffer
+#[tauri::command]
+pub async fn stop_replay_buffer() -> Result<ReplayResult, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut buffer_guard = get_replay_buffer().lock().unwrap();
+        
+        if let Some(handle) = buffer_guard.take() {
+            handle.update_stats();
+            let captured = handle.stats.frames_captured.load(std::sync::atomic::Ordering::Relaxed);
+            let encoded = handle.stats.frames_encoded.load(std::sync::atomic::Ordering::Relaxed);
+            
+            handle.stop();
+            
+            log::info!("Replay buffer stopped. Captured: {}, Encoded: {}", captured, encoded);
+            
+            Ok(ReplayResult {
+                success: true,
+                message: format!("Stopped (captured {} frames)", encoded),
+                clip_path: None,
+            })
+        } else {
+            Ok(ReplayResult {
+                success: false,
+                message: "Replay buffer not active".to_string(),
+                clip_path: None,
+            })
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(ReplayResult {
+            success: false,
+            message: "Replay buffer only available on macOS".to_string(),
+            clip_path: None,
+        })
+    }
+}
+
+/// Saves the current replay buffer contents to an MP4 file
+#[tauri::command]
+pub async fn save_replay(
+    state: State<'_, Arc<AppState>>,
+) -> Result<ReplayResult, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let buffer_guard = get_replay_buffer().lock().unwrap();
+        
+        if let Some(handle) = buffer_guard.as_ref() {
+            // Generate output path
+            let output_path = state.clips_directory.join(format!(
+                "replay_{}.mp4",
+                chrono::Local::now().format("%Y%m%d_%H%M%S")
+            ));
+            
+            // Ensure directory exists
+            if let Err(e) = std::fs::create_dir_all(&state.clips_directory) {
+                return Ok(ReplayResult {
+                    success: false,
+                    message: format!("Failed to create directory: {}", e),
+                    clip_path: None,
+                });
+            }
+            
+            match handle.save(&output_path) {
+                Ok(()) => {
+                    let path_str = output_path.to_string_lossy().to_string();
+                    log::info!("Replay saved to: {}", path_str);
+                    Ok(ReplayResult {
+                        success: true,
+                        message: "Replay saved successfully".to_string(),
+                        clip_path: Some(path_str),
+                    })
+                }
+                Err(e) => {
+                    Ok(ReplayResult {
+                        success: false,
+                        message: format!("Failed to save: {}", e),
+                        clip_path: None,
+                    })
+                }
+            }
+        } else {
+            Ok(ReplayResult {
+                success: false,
+                message: "Replay buffer not active".to_string(),
+                clip_path: None,
+            })
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = state;
+        Ok(ReplayResult {
+            success: false,
+            message: "Replay buffer only available on macOS".to_string(),
+            clip_path: None,
+        })
+    }
+}
+
+/// Gets statistics from the replay buffer
+#[tauri::command]
+pub async fn get_replay_stats() -> Result<ReplayStats, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let buffer_guard = get_replay_buffer().lock().unwrap();
+        
+        if let Some(handle) = buffer_guard.as_ref() {
+            handle.update_stats();
+            Ok(ReplayStats {
+                is_active: handle.is_active(),
+                frames_captured: handle.stats.frames_captured.load(std::sync::atomic::Ordering::Relaxed),
+                frames_dropped: handle.stats.frames_dropped.load(std::sync::atomic::Ordering::Relaxed),
+                frames_encoded: handle.stats.frames_encoded.load(std::sync::atomic::Ordering::Relaxed),
+                buffer_fill_percent: handle.stats.buffer_fill_percent.load(std::sync::atomic::Ordering::Relaxed) as f32,
+                buffer_memory_mb: handle.stats.buffer_memory_bytes.load(std::sync::atomic::Ordering::Relaxed) as f32 / (1024.0 * 1024.0),
+            })
+        } else {
+            Ok(ReplayStats {
+                is_active: false,
+                frames_captured: 0,
+                frames_dropped: 0,
+                frames_encoded: 0,
+                buffer_fill_percent: 0.0,
+                buffer_memory_mb: 0.0,
+            })
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(ReplayStats {
+            is_active: false,
+            frames_captured: 0,
+            frames_dropped: 0,
+            frames_encoded: 0,
+            buffer_fill_percent: 0.0,
+            buffer_memory_mb: 0.0,
+        })
+    }
+}
+
+// ============================================
+// LEGACY NATIVE RECORDING COMMANDS (deprecated)
+// These are kept for backwards compatibility but now use the replay buffer
+// ============================================
+
+/// Result of native recording operations (legacy)
 #[derive(serde::Serialize)]
 pub struct NativeRecordingResult {
     pub success: bool,
@@ -372,7 +612,7 @@ pub struct NativeRecordingResult {
     pub output_path: Option<String>,
 }
 
-/// Statistics from native recording
+/// Statistics from native recording (legacy)
 #[derive(serde::Serialize)]
 pub struct NativeRecordingStats {
     pub is_recording: bool,
@@ -381,160 +621,45 @@ pub struct NativeRecordingStats {
     pub frames_encoded: u64,
 }
 
-// Global handle for native capture (macOS only)
-#[cfg(target_os = "macos")]
-static NATIVE_CAPTURE: std::sync::OnceLock<StdMutex<Option<NativeCaptureHandle>>> = std::sync::OnceLock::new();
-
-#[cfg(target_os = "macos")]
-fn get_native_capture() -> &'static StdMutex<Option<NativeCaptureHandle>> {
-    NATIVE_CAPTURE.get_or_init(|| StdMutex::new(None))
-}
-
-/// Starts native hardware-accelerated recording (macOS only)
-/// Records directly to MP4 at 1080p 60fps using ScreenCaptureKit + VideoToolbox
+/// Starts native hardware-accelerated recording (legacy - now uses replay buffer)
 #[tauri::command]
 pub async fn start_native_recording(
     state: State<'_, Arc<AppState>>,
 ) -> Result<NativeRecordingResult, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut capture_guard = get_native_capture().lock().unwrap();
-        
-        if capture_guard.is_some() {
-            return Ok(NativeRecordingResult {
-                success: false,
-                message: "Native recording already active".to_string(),
-                output_path: None,
-            });
-        }
-
-        // Generate output path
-        let output_path = state.clips_directory.join(format!(
-            "native_{}.mp4",
-            chrono::Local::now().format("%Y%m%d_%H%M%S")
-        ));
-
-        // Create capture with default config (1080p60)
-        let config = CaptureConfig::default();
-        
-        match NativeCaptureHandle::new(config) {
-            Ok(handle) => {
-                match handle.start(&output_path) {
-                    Ok(()) => {
-                        let path_str = output_path.to_string_lossy().to_string();
-                        *capture_guard = Some(handle);
-                        log::info!("Native recording started: {}", path_str);
-                        Ok(NativeRecordingResult {
-                            success: true,
-                            message: "Recording at 1080p 60fps with hardware encoding".to_string(),
-                            output_path: Some(path_str),
-                        })
-                    }
-                    Err(e) => {
-                        Ok(NativeRecordingResult {
-                            success: false,
-                            message: format!("Failed to start: {}", e),
-                            output_path: None,
-                        })
-                    }
-                }
-            }
-            Err(e) => {
-                Ok(NativeRecordingResult {
-                    success: false,
-                    message: format!("Failed to create capture: {}", e),
-                    output_path: None,
-                })
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = state;
-        Ok(NativeRecordingResult {
-            success: false,
-            message: "Native recording only available on macOS".to_string(),
-            output_path: None,
-        })
+    // Redirect to new replay buffer API
+    match start_replay_buffer(state).await {
+        Ok(result) => Ok(NativeRecordingResult {
+            success: result.success,
+            message: result.message,
+            output_path: result.clip_path,
+        }),
+        Err(e) => Err(e),
     }
 }
 
-/// Stops native recording and finalizes the MP4
+/// Stops native recording (legacy - now uses replay buffer)
 #[tauri::command]
 pub async fn stop_native_recording() -> Result<NativeRecordingResult, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut capture_guard = get_native_capture().lock().unwrap();
-        
-        if let Some(handle) = capture_guard.take() {
-            handle.update_stats();
-            let captured = handle.stats.frames_captured.load(std::sync::atomic::Ordering::Relaxed);
-            let dropped = handle.stats.frames_dropped.load(std::sync::atomic::Ordering::Relaxed);
-            let encoded = handle.stats.frames_encoded.load(std::sync::atomic::Ordering::Relaxed);
-            
-            handle.stop();
-            
-            log::info!("Native recording stopped. Captured: {}, Dropped: {}, Encoded: {}", 
-                captured, dropped, encoded);
-            
-            Ok(NativeRecordingResult {
-                success: true,
-                message: format!("Recorded {} frames ({} dropped)", encoded, dropped),
-                output_path: None,
-            })
-        } else {
-            Ok(NativeRecordingResult {
-                success: false,
-                message: "No native recording active".to_string(),
-                output_path: None,
-            })
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(NativeRecordingResult {
-            success: false,
-            message: "Native recording only available on macOS".to_string(),
-            output_path: None,
-        })
+    match stop_replay_buffer().await {
+        Ok(result) => Ok(NativeRecordingResult {
+            success: result.success,
+            message: result.message,
+            output_path: result.clip_path,
+        }),
+        Err(e) => Err(e),
     }
 }
 
-/// Gets statistics from native recording
+/// Gets statistics from native recording (legacy - now uses replay buffer)
 #[tauri::command]
 pub async fn get_native_recording_stats() -> Result<NativeRecordingStats, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let capture_guard = get_native_capture().lock().unwrap();
-        
-        if let Some(handle) = capture_guard.as_ref() {
-            handle.update_stats();
-            Ok(NativeRecordingStats {
-                is_recording: handle.is_active(),
-                frames_captured: handle.stats.frames_captured.load(std::sync::atomic::Ordering::Relaxed),
-                frames_dropped: handle.stats.frames_dropped.load(std::sync::atomic::Ordering::Relaxed),
-                frames_encoded: handle.stats.frames_encoded.load(std::sync::atomic::Ordering::Relaxed),
-            })
-        } else {
-            Ok(NativeRecordingStats {
-                is_recording: false,
-                frames_captured: 0,
-                frames_dropped: 0,
-                frames_encoded: 0,
-            })
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(NativeRecordingStats {
-            is_recording: false,
-            frames_captured: 0,
-            frames_dropped: 0,
-            frames_encoded: 0,
-        })
+    match get_replay_stats().await {
+        Ok(stats) => Ok(NativeRecordingStats {
+            is_recording: stats.is_active,
+            frames_captured: stats.frames_captured,
+            frames_dropped: stats.frames_dropped,
+            frames_encoded: stats.frames_encoded,
+        }),
+        Err(e) => Err(e),
     }
 }
-
