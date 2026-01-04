@@ -178,7 +178,12 @@ pub async fn list_clips(state: State<'_, Arc<AppState>>) -> Result<Vec<ClipInfo>
 /// Deletes a clip by ID
 #[tauri::command]
 pub async fn delete_clip(state: State<'_, Arc<AppState>>, id: String) -> Result<bool, String> {
-    state.delete_clip(&id).map_err(|e| format!("Failed to delete: {}", e))?;
+    log::info!("Delete clip requested: {}", id);
+    state.delete_clip(&id).map_err(|e| {
+        log::error!("Failed to delete clip {}: {}", id, e);
+        format!("Failed to delete: {}", e)
+    })?;
+    log::info!("Clip deleted successfully: {}", id);
     Ok(true)
 }
 

@@ -162,6 +162,7 @@ async function loadClips() {
 
 /**
  * Creates a clip card element
+ * Event handling is done via event delegation in setupClipsGridEventDelegation()
  */
 function createClipCard(clip) {
     const card = document.createElement('div');
@@ -176,7 +177,7 @@ function createClipCard(clip) {
     const icon = isMP4 ? '🎬' : '📹';
     
     card.innerHTML = `
-        <div class="clip-thumbnail" data-clip-id="${clip.id}" onclick="openClip('${clip.id}')">
+        <div class="clip-thumbnail">
             ${icon}
         </div>
         <div class="clip-info">
@@ -185,18 +186,18 @@ function createClipCard(clip) {
         </div>
         <div class="clip-actions">
             ${isMP4 ? `
-                <button class="clip-action-btn open" onclick="openClip('${clip.id}', event)">
+                <button class="clip-action-btn open" data-action="open">
                     ▶️ Play
                 </button>
-                <button class="clip-action-btn reveal" onclick="revealClip('${clip.id}', event)">
+                <button class="clip-action-btn reveal" data-action="reveal">
                     📁 Reveal
                 </button>
             ` : `
-                <button class="clip-action-btn export" onclick="exportToMp4('${clip.id}', event)">
+                <button class="clip-action-btn export" data-action="export">
                     🎬 MP4
                 </button>
             `}
-            <button class="clip-action-btn delete" onclick="deleteClip('${clip.id}', event)">
+            <button class="clip-action-btn delete" data-action="delete">
                 🗑️ Delete
             </button>
         </div>
@@ -283,32 +284,10 @@ async function saveClip() {
 }
 
 /**
- * Deletes a clip
- */
-async function deleteClip(clipId, event) {
-    event.stopPropagation();
-    
-    if (!confirm('Delete this clip?')) {
-        return;
-    }
-    
-    try {
-        await invoke('delete_clip', { id: clipId });
-        showToast('Clip deleted', 'info');
-        await loadClips();
-        await updateLegacyStatus();
-    } catch (error) {
-        console.error('Delete failed:', error);
-        showToast(`Delete failed: ${error}`, 'error');
-    }
-}
-
-/**
  * Opens a clip in the default video player
  */
-async function openClip(clipId, event) {
-    if (event) event.stopPropagation();
-    
+async function openClip(clipId) {
+    console.log('Opening clip:', clipId);
     try {
         await invoke('open_clip', { id: clipId });
     } catch (error) {
@@ -320,9 +299,8 @@ async function openClip(clipId, event) {
 /**
  * Reveals a clip in the file manager
  */
-async function revealClip(clipId, event) {
-    if (event) event.stopPropagation();
-    
+async function revealClip(clipId) {
+    console.log('Revealing clip:', clipId);
     try {
         await invoke('reveal_clip', { id: clipId });
     } catch (error) {
@@ -334,13 +312,18 @@ async function revealClip(clipId, event) {
 /**
  * Exports a clip to MP4 (legacy)
  */
-async function exportToMp4(clipId, event) {
-    event.stopPropagation();
+async function exportToMp4(clipId) {
+    console.log('Exporting clip to MP4:', clipId);
     
-    const btn = event.target;
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '⏳ Exporting...';
+    // Find the button for this clip to update its state
+    const card = document.querySelector(`[data-clip-id="${clipId}"]`);
+    const btn = card ? card.querySelector('[data-action="export"]') : null;
+    const originalText = btn ? btn.textContent : '';
+    
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Exporting...';
+    }
     
     try {
         showToast('Exporting to MP4...', 'info');
@@ -356,8 +339,10 @@ async function exportToMp4(clipId, event) {
         console.error('Export failed:', error);
         showToast(`Export failed: ${error}`, 'error');
     } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
     }
 }
 
@@ -548,6 +533,9 @@ function showToast(message, type = 'info') {
 async function init() {
     console.log('Initializing Quest Shadowplay UI...');
     
+    // Set up event delegation for clips grid
+    setupClipsGridEventDelegation();
+    
     // Initial status update
     await updateLegacyStatus();
     await updateReplayStats();
@@ -559,6 +547,103 @@ async function init() {
     statusInterval = setInterval(updateLegacyStatus, 2000);
     
     console.log('UI initialized');
+}
+
+/**
+ * Sets up event delegation for the clips grid
+ * This handles all button clicks within clip cards
+ */
+function setupClipsGridEventDelegation() {
+    const grid = document.getElementById('clips-grid');
+    if (!grid) {
+        console.error('Clips grid not found!');
+        return;
+    }
+    
+    grid.addEventListener('click', async (e) => {
+        // Find the clip card this click belongs to
+        const card = e.target.closest('.clip-card');
+        if (!card) return;
+        
+        const clipId = card.dataset.clipId;
+        if (!clipId) {
+            console.error('No clip ID found on card');
+            return;
+        }
+        
+        // Check which action was clicked
+        const actionBtn = e.target.closest('[data-action]');
+        if (actionBtn) {
+            const action = actionBtn.dataset.action;
+            console.log('Action clicked:', action, 'for clip:', clipId);
+            
+            e.preventDefault();
+            e.stopPropagation();
+            
+            switch (action) {
+                case 'delete':
+                    await handleDeleteClick(clipId);
+                    break;
+                case 'open':
+                    await openClip(clipId);
+                    break;
+                case 'reveal':
+                    await revealClip(clipId);
+                    break;
+                case 'export':
+                    await exportToMp4(clipId);
+                    break;
+            }
+            return;
+        }
+        
+        // Click on thumbnail opens the clip
+        const thumbnail = e.target.closest('.clip-thumbnail');
+        if (thumbnail) {
+            console.log('Thumbnail clicked for clip:', clipId);
+            await openClip(clipId);
+        }
+    });
+    
+    console.log('Clips grid event delegation set up');
+}
+
+/**
+ * Handles delete button click with confirmation
+ */
+async function handleDeleteClick(clipId) {
+    console.log('Delete requested for clip:', clipId);
+    
+    // Use Tauri's dialog API if available, otherwise skip confirmation
+    let confirmed = true;
+    if (window.__TAURI__ && window.__TAURI__.dialog) {
+        try {
+            confirmed = await window.__TAURI__.dialog.confirm(
+                'Are you sure you want to delete this clip?',
+                { title: 'Delete Clip', kind: 'warning' }
+            );
+        } catch (e) {
+            console.log('Dialog not available, proceeding with delete');
+            confirmed = true;
+        }
+    }
+    
+    if (!confirmed) {
+        console.log('Delete cancelled by user');
+        return;
+    }
+    
+    try {
+        console.log('Invoking delete_clip command...');
+        await invoke('delete_clip', { id: clipId });
+        console.log('Delete successful');
+        showToast('Clip deleted', 'info');
+        await loadClips();
+        await updateLegacyStatus();
+    } catch (error) {
+        console.error('Delete failed:', error);
+        showToast(`Delete failed: ${error}`, 'error');
+    }
 }
 
 // Start when DOM is ready
